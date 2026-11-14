@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import version_completa
+from .configuracion import Configuracion, combinar
 from .entrada import EXTENSIONES, ErrorEntrada, ordenar_por_nombre, recopilar
 from .linea_tiempo import Ritmo
 from .proyecto import CacheFotogramas, Cancelado, Opciones, Proyecto, analizar
@@ -390,18 +392,23 @@ class DialogoAlineacion(QDialog):
 
 
 class DialogoExportar(QDialog):
-    def __init__(self, proyecto: Proyecto, ritmo: Ritmo, salida: Path, padre=None):
+    def __init__(self, proyecto: Proyecto, ritmo: Ritmo, salida: Path, padre=None, preferidos: dict | None = None):
         super().__init__(padre)
         self.setWindowTitle("Generar vídeo")
         self.proyecto = proyecto
         alto_original = proyecto.tam_salida(par=True)[1]
+        pref = preferidos or {}  # lo elegido la última vez (configuración guardada)
 
-        self.formato = _combo([(f.nombre, clave) for clave, f in FORMATOS.items()], "mp4")
+        self.formato = _combo([(f.nombre, clave) for clave, f in FORMATOS.items()], pref.get("formato", "mp4"))
         resoluciones = [(f"Original ({alto_original} px de alto)", None)]
         resoluciones += [(f"{a} px de alto", a) for a in (2160, 1440, 1080, 720, 480, 360) if a < alto_original]
         self.alto = _combo(resoluciones, 1080 if alto_original > 1080 else None)
-        self.fps = _combo([(f"{v} fps", float(v)) for v in (60, 50, 30, 25, 24, 15, 10)], 30.0)
-        self.calidad = _combo([(c.capitalize(), c) for c in CALIDADES], "alta")
+        if "alto" in pref:  # la altura guardada solo si cabe en este proyecto (si no, la original)
+            i = self.alto.findData(pref["alto"])
+            self.alto.setCurrentIndex(i if i >= 0 else 0)
+        self.fps = _combo([(f"{v} fps", float(v)) for v in (60, 50, 30, 25, 24, 15, 10)], pref.get("fps", 30.0))
+        self.calidad = _combo([(c.capitalize(), c) for c in CALIDADES], pref.get("calidad", "alta"))
+        self.calidad.setEnabled(self.formato.currentData() != "gif")
         self.transicion = _combo([("Fundido entre fotos", True), ("Sin fundido (corte)", False)], ritmo.fundido)
         self.t_foto = _segundos(ritmo.t_foto)
         self.t_transicion = _segundos(ritmo.t_transicion, 0.05)
@@ -495,10 +502,11 @@ class DialogoExportar(QDialog):
 
 
 class Ventana(QMainWindow):
-    def __init__(self, opciones: Opciones, ritmo: Ritmo, orden: str = "nombre"):
+    def __init__(self, opciones: Opciones, ritmo: Ritmo, orden: str = "nombre", config: Configuracion | None = None):
         super().__init__()
         self.setWindowTitle("Evoluciona")
         self.opciones, self.ritmo, self.orden = opciones, ritmo, orden
+        self.config = config or Configuracion()
         self.proyecto: Proyecto | None = None
         self.cache: CacheFotogramas | None = None
         self._qimagenes: dict[int, QImage] = {}
@@ -599,7 +607,8 @@ class Ventana(QMainWindow):
         self.act_ajustar = nueva("Ajustar a la ventana", self.visor.ajustar, ("0", "Ctrl+0"))
         self.act_ir = nueva("Ir a la foto…", self._abrir_selector, ("Ctrl+G",))
         self.act_rotulo = nueva("Nombre del fichero en modo vídeo", self._refrescar, checkable=True)
-        self.act_rotulo.setChecked(True)
+        self.act_rotulo.setChecked(self.config.logico("vista/rotulo", True))
+        self.act_rotulo.toggled.connect(lambda v: self.config.guardar("vista/rotulo", v))
 
         menus = self.menuBar()
         m = menus.addMenu("&Archivo")
@@ -886,8 +895,20 @@ class Ventana(QMainWindow):
         self._t = self.ritmo.inicio(i)  # se conserva la foto que se estaba viendo
         self._ajustar_linea()
         self._actualizar_controles()
+        self.config.guardar_ritmo(self.ritmo)
         if self.modo_video:
             self._refrescar()
+
+    def _poner_ritmo(self, ritmo: Ritmo) -> None:
+        """Lleva un ritmo a los controles del modo vídeo (y, por _ritmo_cambiado, lo aplica y guarda)."""
+        for w in (self.cmb_transicion, self.spn_foto, self.spn_transicion):
+            w.blockSignals(True)
+        self.cmb_transicion.setCurrentIndex(self.cmb_transicion.findData(ritmo.fundido))
+        self.spn_foto.setValue(ritmo.t_foto)
+        self.spn_transicion.setValue(ritmo.t_transicion)
+        for w in (self.cmb_transicion, self.spn_foto, self.spn_transicion):
+            w.blockSignals(False)
+        self._ritmo_cambiado()
 
     def _linea_movida(self, valor: int) -> None:
         self._t = valor / 1000.0
@@ -940,7 +961,10 @@ class Ventana(QMainWindow):
     # ---------------------------------------------------------------- abrir y analizar
 
     def _carpeta_inicial(self) -> str:
-        return str(self.proyecto.rutas[0].parent) if self.proyecto else str(Path.home())
+        if self.proyecto:
+            return str(self.proyecto.rutas[0].parent)
+        guardada = self.config.texto("archivos/carpeta")
+        return guardada if guardada and Path(guardada).is_dir() else str(Path.home())
 
     def _abrir_fotos(self) -> None:
         filtro = "Imágenes (" + " ".join(f"*{e}" for e in sorted(EXTENSIONES)) + ");;Todos los ficheros (*)"
@@ -1018,6 +1042,8 @@ class Ventana(QMainWindow):
         if self.cache is not None:
             self.cache.cerrar()
         self.opciones = opciones
+        self.config.guardar_opciones(opciones)
+        self.config.guardar("archivos/carpeta", str(proyecto.rutas[0].parent))
         self.proyecto = proyecto
         self.cache = CacheFotogramas(proyecto, proyecto.tam_salida(lado_max=LADO_PREVIA))
         self._qimagenes.clear()
@@ -1049,10 +1075,14 @@ class Ventana(QMainWindow):
             QMessageBox.critical(self, "Generar vídeo",
                                  "No se encuentra ffmpeg. Instálalo con:\n\nsudo apt install ffmpeg")
             return
-        d = DialogoExportar(self.proyecto, self.ritmo, self.proyecto.rutas[0].parent / "evoluciona.mp4", self)
+        d = DialogoExportar(self.proyecto, self.ritmo, self.proyecto.rutas[0].parent / "evoluciona.mp4", self,
+                            self.config.video())
         if d.exec() != QDialog.Accepted:
             return
         ajustes, salida = d.ajustes(), d.salida()
+        self.config.guardar_video(ajustes.formato, ajustes.alto, ajustes.fps, ajustes.calidad)
+        if ajustes.ritmo != self.ritmo:
+            self._poner_ritmo(ajustes.ritmo)  # el modo vídeo usa el mismo ritmo que el vídeo generado
         prog = QProgressDialog("Generando vídeo…", "Cancelar", 0, 100, self)
         prog.setWindowTitle("Generar vídeo")
         prog.setWindowModality(Qt.WindowModal)
@@ -1163,11 +1193,30 @@ class Ventana(QMainWindow):
         if self.cache is not None:
             self.cache.cerrar()
         self._ejecutor_alta.shutdown(wait=False, cancel_futures=True)
+        self.config.guardar("ventana/geometria", self.saveGeometry())
+        self.config.sincronizar()
         super().closeEvent(evento)
 
 
-def ejecutar(rutas: list[Path], opciones: Opciones, ritmo: Ritmo, orden: str = "nombre") -> int:
+def _en_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        with open("/proc/version", encoding="utf-8", errors="replace") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
+def ejecutar(rutas: list[Path], opciones_cli: dict | None = None, ritmo_cli: dict | None = None,
+             orden: str = "nombre") -> int:
+    """Abre la ventana. ``opciones_cli`` y ``ritmo_cli``: lo indicado en la línea de órdenes, que prevalece
+    sobre la configuración guardada."""
     signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C en la terminal cierra la aplicación
+    if _en_wsl() and "QT_QPA_PLATFORM" not in os.environ and os.environ.get("DISPLAY"):
+        # En WSLg, con Wayland los desplegables de Qt se quedan abiertos tras elegir un valor;
+        # con X11 (XWayland) funcionan bien. QT_QPA_PLATFORM=wayland lo evita si se prefiere.
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("Evoluciona")
     app.setDesktopFileName("evoluciona")  # app_id de Wayland: enlaza la ventana con evoluciona.desktop
@@ -1175,7 +1224,13 @@ def ejecutar(rutas: list[Path], opciones: Opciones, ritmo: Ritmo, orden: str = "
     traductor = QTranslator(app)  # botones estándar de Qt (Aceptar, Cancelar, Sí, No…) en español
     if traductor.load("qtbase_es", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
         app.installTranslator(traductor)
-    ventana = Ventana(opciones, ritmo, orden)
+    config = Configuracion()
+    opciones = combinar(config.opciones(), opciones_cli or {})
+    ritmo = combinar(config.ritmo(), ritmo_cli or {})
+    ventana = Ventana(opciones, ritmo, orden, config)
+    geometria = config.geometria()
+    if geometria is not None:
+        ventana.restoreGeometry(geometria)
     ventana.show()
     if rutas:
         QTimer.singleShot(0, lambda: ventana.abrir(rutas))

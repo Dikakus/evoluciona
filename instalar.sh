@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 NOMBRE="evoluciona"
 PROYECTO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ESTE=$(basename "${BASH_SOURCE[0]}")
@@ -251,6 +251,12 @@ consultar() {
         *":$P/share:"*) echo "en_xdg=si" ;; *) echo "en_xdg=no" ;; esac
 }
 
+T0=$(date +%s)
+transcurrido() {  # tiempo desde T0 (o desde $1), p. ej. «2 min 05 s»
+    s=$(( $(date +%s) - ${1:-$T0} ))
+    if [ "$s" -ge 60 ]; then printf '%d min %02d s' $((s / 60)) $((s % 60)); else printf '%d s' "$s"; fi
+}
+
 instalar_fichero() {  # ORIGEN DESTINO MODO: copia atómica (temporal en el destino + mv)
     d=$(dirname "$2")
     como "$d" mkdir -p "$d"
@@ -269,17 +275,24 @@ instalar_programa() {  # P CARGA VERSION COMMIT MODO
     nuevo="$L/$V-$COMMIT-$(date +%Y%m%d%H%M%S)"
     como "$L" mkdir -p "$L"
 
-    crear() {  # crear EXTRAS
-        echo "Creando el entorno de Python en $nuevo (extras: $1)…"
+    crear() {  # crear EXTRAS; pip y uv muestran su propio progreso (con tiempo restante por paquete)
+        t=$(date +%s)
+        echo "[1/3] Creando el entorno de Python en $nuevo…"
         if [ -n "$UV" ]; then
-            como "$L" env UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never "$UV" venv -q --python "$PY" "$nuevo" &&
-            como "$L" env UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never "$UV" pip install -q --python "$nuevo/bin/python" \
-                "evoluciona[$1] @ file://$RUEDA"
+            como "$L" env UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never "$UV" venv -q --python "$PY" "$nuevo" || return 1
         else
-            como "$L" "$PY" -m venv "$nuevo" &&
-            como "$L" "$nuevo/bin/python" -m pip install -q --no-cache-dir --disable-pip-version-check \
-                "evoluciona[$1] @ file://$RUEDA"
+            como "$L" "$PY" -m venv "$nuevo" || return 1
         fi
+        case $1 in gpu*) tam="unos 3 GB" ;; *) tam="unos 200 MB" ;; esac
+        echo "[2/3] Descargando e instalando las dependencias ($1; $tam; es lo que más tarda)…"
+        if [ -n "$UV" ]; then
+            como "$L" env UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never "$UV" pip install --python "$nuevo/bin/python" \
+                "evoluciona[$1] @ file://$RUEDA" || return 1
+        else
+            como "$L" "$nuevo/bin/python" -m pip install --no-cache-dir --disable-pip-version-check \
+                --progress-bar on "evoluciona[$1] @ file://$RUEDA" || return 1
+        fi
+        echo "      dependencias instaladas en $(transcurrido "$t")"
     }
 
     if [ "$MODO" = gpu ]; then
@@ -293,6 +306,7 @@ instalar_programa() {  # P CARGA VERSION COMMIT MODO
         echo "Error: no se pudo crear el entorno de Python" >&2; exit 1
     fi
 
+    echo "[3/3] Comprobando que el programa arranca…"
     # comprobación antes de activar la nueva versión: si falla, la instalada sigue intacta
     if ! QT_QPA_PLATFORM=offscreen "$nuevo/bin/python" -c \
             'import PySide6.QtWidgets, cv2, onnxruntime, evoluciona.gui, evoluciona.cli' 2>"$C/import.err"; then
@@ -321,7 +335,7 @@ instalar_programa() {  # P CARGA VERSION COMMIT MODO
         fi
     done
     instalar_fichero "$C/evoluciona" "$P/bin/evoluciona" 755
-    echo "Programa instalado: $V ($COMMIT, $MODO)"
+    echo "Programa instalado: $V ($COMMIT, $MODO) en $(transcurrido)"
 }
 
 instalar_escritorio() {  # P CARGA
@@ -434,8 +448,8 @@ remoto() {  # remoto [-t] ORDEN ARGS...: ejecuta una orden (sin shell intermedio
 destino() {  # destino ACCION ARGS...: ejecuta la parte del instalador que corre en el destino
     if [[ -z $EQUIPO ]]; then
         sh "$TMP/destino.sh" "$@"
-    elif [[ $1 != consultar && $1 != diagnostico && ${D[necesita_sudo]:-} == si && ${D[sudo_sin_clave]:-} != si ]]; then
-        remoto -t sh "$RT/destino.sh" "$@"  # con terminal: sudo pedirá la contraseña
+    elif [[ $1 != consultar && $1 != diagnostico ]]; then
+        remoto -t sh "$RT/destino.sh" "$@"  # con terminal: sudo puede pedir la contraseña y se ve el progreso
     else
         remoto sh "$RT/destino.sh" "$@" </dev/null  # sin terminal: la salida se analiza
     fi
@@ -751,7 +765,7 @@ lista() { local f; for f in "$@"; do if existe "$f"; then msg "  sustituye  $f";
 
 titulo "Cambios en $DONDE"
 if [[ ${ACCION[programa]} == instalar ]]; then
-    msg "  crea       $P/lib/evoluciona/$PVER-$COMMIT-<fecha>/  (entorno de Python, ~$([[ $MODO == gpu ]] && echo '3,5 GB' || echo '700 MB'))"
+    msg "  crea       $P/lib/evoluciona/$PVER-$COMMIT-<fecha>/  (entorno de Python, ~$([[ $MODO == gpu ]] && echo '3,5 GB' || echo '700 MB'); descarga ~$([[ $MODO == gpu ]] && echo '3 GB' || echo '200 MB'))"
     if [[ -n ${D[inst_programa]:-} ]]; then msg "  sustituye  $P/lib/evoluciona/actual  (enlace a la versión activa)"
     else msg "  crea       $P/lib/evoluciona/actual  (enlace a la versión activa)"; fi
     for v in "${ANTIGUAS[@]}"; do msg "  borra      $v"; done
@@ -767,6 +781,7 @@ msg "Los modelos (~170 MB) se descargan la primera vez que se usan, en ~/.cache/
 
 if ((SIMULAR)); then msg $'\nSimulación: no se ha cambiado nada.'; exit 0; fi
 confirmar $'\n'"¿Instalar en $DONDE?" || { msg "Cancelado."; exit "$E_CANCELADO"; }
+INICIO=$SECONDS
 
 # ------------------------------------------------------------------------------------- instalación
 if [[ -n $EQUIPO ]]; then
@@ -800,4 +815,4 @@ fi
 if ((${#AVISOS[@]})); then
     msg "  Avisos anteriores:"; for a in "${AVISOS[@]}"; do msg "   - $a"; done
 fi
-msg "Listo."
+msg "Listo (instalación en $(( (SECONDS - INICIO) / 60 )) min $(( (SECONDS - INICIO) % 60 )) s)."

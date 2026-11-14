@@ -17,7 +17,8 @@ class ErrorEntrada(Exception):
 
 
 def _tokens(texto: str) -> list[tuple[int, object]]:
-    return [(0, int(p)) if p.isdigit() else (1, p) for p in re.split(r"(\d+)", texto.lower()) if p]
+    """Trozos numéricos y de letras; los separadores (- _ . espacio…) no cuentan: foto-2 = foto_2."""
+    return [(0, int(p)) if p.isdigit() else (1, p) for p in re.findall(r"\d+|[^\W\d_]+", texto.lower())]
 
 
 def _clave_natural(ruta: Path):
@@ -48,7 +49,7 @@ def _fecha(ruta: Path) -> float:
         return 0.0
 
 
-_ANO = r"(?:19|20)\d\d"
+_ANO = r"(?:199\d|20\d\d)"  # años de fotos digitales: «193315» no es 1933 sino, p. ej., una hora
 _PATRONES = (
     re.compile(rf"(?<!\d)(?P<a>{_ANO})(?P<sep>[-_. ])(?P<m>\d{{1,2}})(?P=sep)(?P<d>\d{{1,2}})(?!\d)"),  # 2026-10-11
     re.compile(rf"(?<!\d)(?P<d>\d{{1,2}})(?P<sep>[-_. ])(?P<m>\d{{1,2}})(?P=sep)(?P<a>{_ANO})(?!\d)"),  # 11-10-2026
@@ -93,26 +94,40 @@ def fechas_en_nombre(nombre: str) -> tuple[int, int, list[date]] | None:
     return None
 
 
+def _resto(texto: str) -> list[tuple[int, object]]:
+    """Lo que sigue a la fecha, para desempatar: sus cifras juntas (la hora 22-40-35 = 224035) y sus letras."""
+    cifras = "".join(re.findall(r"\d", texto))
+    return ([(0, int(cifras))] if cifras else []) + [(1, p) for p in re.findall(r"[^\W\d_]+", texto.lower())]
+
+
 def ordenar_por_nombre(rutas: list[Path]) -> list[Path]:
     """Ordena por la secuencia del nombre: numérica (foto-2 antes que foto-10) o de fechas.
 
-    Si *todos* los nombres contienen una fecha se ordena cronológicamente por ella, aunque
-    esté escrita sin ceros (nombre-20261011, nombre-2026111) o como día-mes-año. Cuando una
-    fecha compacta es ambigua se elige la interpretación más cercana a la fecha de captura
-    del fichero. Si algún nombre no tiene fecha, se usa el orden natural para todos.
+    Si al menos la mitad de los nombres contienen una fecha, se ordena cronológicamente por ella,
+    aunque esté escrita sin ceros (nombre-20261011, nombre-2026111) o como día-mes-año; lo que
+    va detrás (p. ej. la hora: _124118) desempata. Los nombres sin fecha se colocan por su fecha
+    y hora de captura (EXIF o, si no hay, de modificación). Cuando una fecha compacta es ambigua
+    se elige la interpretación más cercana a la fecha de captura. Si la mayoría de los nombres no
+    tienen fecha, se usa el orden natural. Los separadores (- _ . espacio) no distinguen series.
     """
     halladas = [fechas_en_nombre(r.stem) for r in rutas]
-    if not rutas or any(h is None for h in halladas):
+    if not rutas or 2 * sum(h is not None for h in halladas) < len(rutas):
         return sorted(rutas, key=_clave_natural)
 
     def clave(par):
-        ruta, (ini, fin, fechas) = par
+        ruta, hallada = par
+        nombre = ruta.stem
+        if hallada is None:  # sin fecha en el nombre: la de captura, con su hora para desempatar
+            momento = datetime.fromtimestamp(_fecha(ruta))
+            prefijo = re.split(r"\d", nombre, maxsplit=1)[0]
+            resto = [(0, int(momento.strftime("%H%M%S")))]
+            return (_tokens(prefijo), momento.date().toordinal(), resto, str(ruta))
+        ini, fin, fechas = hallada
         f = fechas[0]
         if len(fechas) > 1:
             real = date.fromtimestamp(_fecha(ruta))
             f = min(fechas, key=lambda x: abs((x - real).days))
-        nombre = ruta.stem
-        return (_tokens(nombre[:ini]) + [(0, f.toordinal())] + _tokens(nombre[fin:]), str(ruta))
+        return (_tokens(nombre[:ini]), f.toordinal(), _resto(nombre[fin:]), str(ruta))
 
     return [r for r, _ in sorted(zip(rutas, halladas), key=clave)]
 

@@ -72,3 +72,21 @@ def test_fecha_ambigua():
 
 def test_sin_fecha_en_todos_usa_orden_natural():
     assert orden("b-20261011.jpg", "a-3.jpg", "a-20.jpg") == ["a-3.jpg", "a-20.jpg", "b-20261011.jpg"]
+
+
+def test_separadores_y_horas_no_separan_la_serie():
+    assert orden("e-20240831_124150.jpg", "e_20240831_22-40-35.jpg", "e_20240106.jpg", "e-20240203.jpg") == \
+        ["e_20240106.jpg", "e-20240203.jpg", "e-20240831_124150.jpg", "e_20240831_22-40-35.jpg"]
+
+
+def test_una_hora_no_es_un_ano_y_sin_fecha_va_por_su_captura(tmp_path):
+    import os
+    from datetime import datetime
+    nombres = ["l-20230101.jpg", "l-193315.jpg", "l-20230301.jpg"]
+    for n in nombres:
+        (tmp_path / n).write_bytes(b"")
+    marca = datetime(2023, 2, 1, 19, 33, 15).timestamp()  # sin EXIF: se usa la fecha de modificación
+    os.utime(tmp_path / "l-193315.jpg", (marca, marca))
+    assert fechas_en_nombre("l-193315") is None
+    assert [r.name for r in ordenar_por_nombre([tmp_path / n for n in nombres])] == \
+        ["l-20230101.jpg", "l-193315.jpg", "l-20230301.jpg"]

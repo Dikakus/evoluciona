@@ -50,7 +50,8 @@ para fotos HEIC/HEIF de móvil. La primera vez que se alinea se descarga el mode
 
 Las fotos se ordenan por la secuencia de su nombre: numérica (`nombre-2` antes que `nombre-10`) o de
 fechas, aunque estén escritas sin ceros (`nombre-202612`, `nombre-2026915`, `nombre-20261011`) o como
-día-mes-año (`foto 2-9-2026`). Si una fecha compacta es ambigua (`2026111`: 11 de enero o 1 de noviembre),
+día-mes-año (`foto 2-9-2026`). La hora que siga a la fecha desempata, `-` y `_` valen igual, y si alguna
+foto no lleva fecha en el nombre se coloca por su fecha de captura. Si una fecha compacta es ambigua (`2026111`: 11 de enero o 1 de noviembre),
 se elige la más cercana a la fecha de captura del fichero. Con `--orden fecha` se usa la fecha de captura
 (EXIF) y con `--orden dado`, el orden en que se indican los ficheros.
 
@@ -70,6 +71,10 @@ se elige la más cercana a la fecha de captura del fichero. Con `--orden fecha` 
 - **Generar vídeo…**: formato (MP4 H.264, MP4 H.265, WebM VP9, GIF), resolución, fps, calidad, transición y tiempos.
 - **Alineación…**: método de alineado, foto de referencia, modelo de detección y recorte.
 
+La ventana recuerda entre sesiones la alineación, el ritmo del modo vídeo, las opciones del último vídeo
+generado, la última carpeta y el tamaño de la ventana (`~/.config/Evoluciona/Evoluciona.ini`); lo que se
+indique en la línea de órdenes prevalece.
+
 ### Generar el vídeo sin ventana
 
 ```bash
@@ -83,7 +88,9 @@ se elige la más cercana a la fecha de captura del fichero. Con `--orden fecha` 
 
 1. Un modelo de segmentación (U2-Net) obtiene la silueta de la figura destacada de cada foto.
 2. Cada foto se escala y desplaza (sin rotar ni deformar) para que su silueta coincida con la de referencia:
-   - `contorno` (por defecto): parte de igualar la altura y después maximiza el solape de las siluetas;
+   - `contorno` (por defecto): la escala iguala la altura de la figura a la de la primera foto y la
+     posición maximiza el solape de las siluetas (si la figura sale por el borde, el solape corrige
+     también la escala);
    - `altura`: iguala la altura de la figura; `area`: iguala su superficie; `ninguno`: no alinea.
 3. La referencia es la foto anterior (por defecto, adecuado para cambios graduales) o siempre la primera.
 4. El resultado se recorta a la zona común a todas las fotos para que no aparezcan bordes negros.

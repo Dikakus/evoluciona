@@ -70,3 +70,10 @@ def test_sin_alinear_y_exportar(tmp_path):
     salida = exportar(p, tmp_path / "v.mp4", AjustesVideo(fps=10, ritmo=Ritmo(0.2, 0.2, True)))
     assert salida.exists() and salida.stat().st_size > 500
     assert not list(tmp_path.glob(".*parcial*"))
+
+
+def test_figura_cortada():
+    filas = np.r_[np.zeros(20), np.full(260, 40.0), np.zeros(40)]
+    assert not al._cortada(filas)  # entera
+    assert al._cortada(np.r_[np.full(280, 40.0), np.zeros(40)])  # sale por arriba
+    assert not al._cortada(np.r_[np.zeros(20), np.full(299, 40.0), [3.0]])  # solo un pie roza el borde

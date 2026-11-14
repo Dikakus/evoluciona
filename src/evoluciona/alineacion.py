@@ -38,6 +38,7 @@ class Figura:
     x1: float
     y1: float
     area: float
+    cortada: bool = False  # toca el borde superior o inferior de la foto: su altura no es fiable
 
     @property
     def alto(self) -> float:
@@ -52,7 +53,7 @@ class Figura:
             t.s * self.cx + t.tx, t.s * self.cy + t.ty,
             t.s * self.x0 + t.tx, t.s * self.y0 + t.ty,
             t.s * self.x1 + t.tx, t.s * self.y1 + t.ty,
-            self.area * t.s * t.s,
+            self.area * t.s * t.s, self.cortada,
         )
 
 
@@ -63,6 +64,7 @@ class Referencia:
     figura: Figura  # en píxeles del lienzo
     mascara: np.ndarray  # float32 0-1, lienzo a baja resolución
     valido: np.ndarray  # float32 0-1: zona del lienzo cubierta por la foto
+    alto0: float = 0.0  # altura de la primera figura en el lienzo: fija la escala de toda la serie
 
 
 def _percentiles(perfil: np.ndarray, bajo: float, alto: float) -> tuple[float, float]:
@@ -71,6 +73,20 @@ def _percentiles(perfil: np.ndarray, bajo: float, alto: float) -> tuple[float, f
     a = float(np.searchsorted(acum, total * bajo))
     b = float(np.searchsorted(acum, total * alto)) + 1.0
     return a, b
+
+
+def _cortada(filas: np.ndarray) -> bool:
+    """¿Sale la figura por el borde superior o inferior de la foto?
+
+    No basta con que la máscara toque el borde (un pie, un mechón o un poco de suelo lo hacen): tiene que
+    mantener en toda la franja del borde (3 % de las filas) al menos la mitad de su anchura típica.
+    """
+    con_figura = filas[filas > 0]
+    if con_figura.size == 0:
+        return False
+    umbral = 0.5 * float(np.median(con_figura))
+    franja = max(2, round(0.03 * filas.size))
+    return bool((filas[:franja] >= umbral).all() or (filas[-franja:] >= umbral).all())
 
 
 def describir(mascara: np.ndarray, ancho: int, alto: int) -> tuple[Figura | None, np.ndarray]:
@@ -102,7 +118,8 @@ def describir(mascara: np.ndarray, ancho: int, alto: int) -> tuple[Figura | None
     total = cols.sum()
     cx = float((cols * (np.arange(wm) + 0.5)).sum() / total)
     cy = float((filas * (np.arange(hm) + 0.5)).sum() / total)
-    figura = Figura(cx * fx, cy * fy, x0 * fx, y0 * fy, x1 * fx, y1 * fy, float(total) * fx * fy)
+    cortada = _cortada(filas)
+    figura = Figura(cx * fx, cy * fy, x0 * fx, y0 * fy, x1 * fx, y1 * fy, float(total) * fx * fy, cortada)
     if figura.alto <= 0 or figura.ancho <= 0:
         return None, limpia
     return figura, limpia
@@ -137,12 +154,13 @@ def a_lienzo(mascara: np.ndarray, t: Similitud, tam_foto: tuple[int, int], lienz
     return m, v
 
 
-def _inicial(fig: Figura, ref: Figura, metodo: str) -> Similitud:
+def _inicial(fig: Figura, ref: Figura, metodo: str, alto0: float = 0.0) -> Similitud:
     if metodo == "area":
         s = math.sqrt(ref.area / fig.area)
         return Similitud(s, ref.cx - s * fig.cx, ref.cy - s * fig.cy)
-    # por altura: misma altura de silueta, centroide horizontal y centro vertical de la caja
-    s = ref.alto / fig.alto
+    # por altura: la de la primera figura (no la de la anterior, para que los errores no se acumulen);
+    # centroide horizontal y centro vertical de la caja de la anterior
+    s = (alto0 or ref.alto) / fig.alto
     return Similitud(s, ref.cx - s * fig.cx, (ref.y0 + ref.y1) / 2.0 - s * (fig.y0 + fig.y1) / 2.0)
 
 
@@ -154,12 +172,14 @@ def _refinar(
     q, tam = escala_lienzo(lienzo)
     suave = cv2.GaussianBlur(mascara, (0, 0), 1.2)
     ref_m = cv2.GaussianBlur(ref.mascara, (0, 0), 1.2)
-    unos = np.ones_like(mascara)
-    masa_ref = float(ref_m.sum()) + 1e-6
     # tamaño característico de la figura en el lienzo, para normalizar los desplazamientos
     escala_fig = max(ref.figura.alto, ref.figura.ancho)
     c0x, c0y = t0.s * fig.cx + t0.tx, t0.s * fig.cy + t0.ty
-    LIM = 0.45
+    LIM = 0.45  # desplazamiento máximo, en tamaños de figura
+    # La escala la fija la altura de la silueta: el solape solo ajusta la posición. Si se deja que el solape
+    # corrija la escala, los cambios de postura la desvían y, al encadenar fotos, el error se acumula.
+    # Solo cuando alguna figura está cortada por el borde (altura no fiable) se corrige también la escala.
+    LIM_S = 0.25 if (fig.cortada or ref.figura.cortada) else 0.0
 
     def transformacion(p) -> Similitud:
         s = t0.s * math.exp(p[0])
@@ -167,28 +187,38 @@ def _refinar(
         return Similitud(s, cx - s * fig.cx, cy - s * fig.cy)
 
     def coste(p) -> float:
-        if max(abs(p[0]), abs(p[1]), abs(p[2])) > LIM:
+        if abs(p[0]) > LIM_S + 1e-12 or max(abs(p[1]), abs(p[2])) > LIM:
             return 3.0
         M = _matriz_pequena(transformacion(p), tam_foto, mascara.shape, q)
-        m = cv2.warpAffine(suave, M, tam, flags=cv2.INTER_LINEAR)
-        v = cv2.warpAffine(unos, M, tam, flags=cv2.INTER_LINEAR) * ref.valido
-        a, b = m * v, ref_m * v
+        # solape dentro de la zona que cubre la foto de referencia; lo que la foto actual no cubre cuenta
+        # como fondo (no se descarta: descartarlo y penalizarlo aparte premiaba ampliar y la escala derivaba)
+        a = cv2.warpAffine(suave, M, tam, flags=cv2.INTER_LINEAR) * ref.valido
+        b = ref_m * ref.valido
         union = float(np.maximum(a, b).sum())
         if union < 1e-6:
             return 3.0
-        iou = float(np.minimum(a, b).sum()) / union
-        # penaliza dejar la figura de referencia fuera de la zona comparable
-        oculto = 1.0 - float(b.sum()) / masa_ref
-        return (1.0 - iou) + 0.5 * oculto
+        return 1.0 - float(np.minimum(a, b).sum()) / union
 
     mejor_p, mejor_c = np.zeros(3), coste(np.zeros(3))
-    for ds in (0.0, -0.12, 0.12):  # varios arranques en escala para evitar mínimos locales
-        p0 = np.array([ds, 0.0, 0.0])
-        simplex = np.vstack([p0, p0 + (0.06, 0, 0), p0 + (0, 0.06, 0), p0 + (0, 0, 0.06)])
-        r = minimize(coste, p0, method="Nelder-Mead",
-                     options={"initial_simplex": simplex, "xatol": 5e-4, "fatol": 1e-5, "maxiter": 250})
-        if r.fun < mejor_c:
-            mejor_p, mejor_c = r.x, float(r.fun)
+    if LIM_S > 0:
+        for ds in (0.0, -0.12, 0.12):  # varios arranques en escala para evitar mínimos locales
+            p0 = np.array([ds, 0.0, 0.0])
+            simplex = np.vstack([p0, p0 + (0.06, 0, 0), p0 + (0, 0.06, 0), p0 + (0, 0, 0.06)])
+            r = minimize(coste, p0, method="Nelder-Mead",
+                         options={"initial_simplex": simplex, "xatol": 5e-4, "fatol": 1e-5, "maxiter": 250})
+            if r.fun < mejor_c:
+                mejor_p, mejor_c = r.x, float(r.fun)
+    else:
+        def coste_xy(p2):
+            return coste(np.array([0.0, p2[0], p2[1]]))
+
+        for d0 in ((0.0, 0.0), (-0.05, 0.0), (0.05, 0.0)):  # solo posición
+            p0 = np.array(d0)
+            r = minimize(coste_xy, p0, method="Nelder-Mead",
+                         options={"initial_simplex": np.vstack([p0, p0 + (0.04, 0), p0 + (0, 0.04)]),
+                                  "xatol": 5e-4, "fatol": 1e-5, "maxiter": 200})
+            if r.fun < mejor_c:
+                mejor_p, mejor_c = np.array([0.0, r.x[0], r.x[1]]), float(r.fun)
     return transformacion(mejor_p)
 
 
@@ -199,7 +229,7 @@ def alinear(
     """Transformación que superpone la figura de la foto sobre la de referencia."""
     if metodo not in ("contorno", "altura", "area"):
         raise ValueError(f"Método desconocido: {metodo}")
-    t0 = _inicial(fig, ref.figura, metodo)
+    t0 = _inicial(fig, ref.figura, metodo, ref.alto0)
     if metodo == "contorno":
         return _refinar(fig, mascara, tam_foto, ref, lienzo, t0)
     return t0

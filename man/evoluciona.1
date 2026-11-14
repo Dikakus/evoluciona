@@ -1,4 +1,4 @@
-.TH EVOLUCIONA 1 "2026-11-14" "evoluciona 0.3.0" "Órdenes de usuario"
+.TH EVOLUCIONA 1 "2026-11-14" "evoluciona 0.4.0" "Órdenes de usuario"
 .SH NOMBRE
 evoluciona \- alinea las fotografías de un timelapse sobre la figura en primer plano, las compara y genera vídeo
 .SH SINOPSIS
@@ -41,7 +41,12 @@ Formatos: JPEG, PNG, WebP, BMP, TIFF y, si está instalado pillow\-heif, HEIC/HE
 Orden de las fotos.
 .B nombre
 (por defecto) sigue la secuencia del nombre: numérica (nombre\-2 antes que nombre\-10) o de fechas, también
-compactas y sin ceros (nombre\-202612, nombre\-2026915, nombre\-20261011) o día\-mes\-año.
+compactas y sin ceros (nombre\-202612, nombre\-2026915, nombre\-20261011) o día\-mes\-año,
+con años desde 1990.
+Lo que sigue a la fecha (p.\& ej.\& la hora: _124118 o _22\-40\-35) desempata, y los separadores
+(\- _ . espacio) no distinguen series.
+Si al menos la mitad de los nombres tienen fecha, los que no la tienen se colocan por su fecha y hora de
+captura (EXIF o, si no hay, de modificación).
 Si una fecha compacta es ambigua se elige la más cercana a la fecha de captura del fichero.
 .B fecha
 usa la fecha de captura (EXIF) y
@@ -63,7 +68,9 @@ Muestra la ayuda de las opciones.
 .TP
 .BR \-\-metodo " {contorno,altura,area,ninguno}"
 .B contorno
-(por defecto) maximiza el solape de las siluetas;
+(por defecto): la escala la fija la altura de la figura (la de la primera foto, para que los errores no
+se acumulen) y la posición, el máximo solape de las siluetas; si la figura sale por el borde de la foto,
+el solape corrige también la escala;
 .B altura
 iguala la altura de la figura;
 .B area
@@ -154,6 +161,15 @@ Mover la imagen ampliada.
 .TP
 .B F1
 Resumen de atajos.
+.SH CONFIGURACIÓN
+La ventana guarda y recupera al abrirse la alineación (método, referencia, modelo y recorte), el ritmo
+del modo vídeo, las opciones con las que se generó el último vídeo (formato, resolución, fluidez y
+calidad), si se sobreimprime el nombre del fichero, la última carpeta abierta y el tamaño y posición de
+la ventana.
+Las opciones indicadas en la línea de órdenes prevalecen sobre lo guardado.
+Con
+.B \-\-exportar
+no se usa lo guardado: valores por defecto más las opciones indicadas.
 .SH GPU
 Si está instalado
 .B onnxruntime\-gpu
@@ -169,10 +185,18 @@ Con el valor
 no se usa la GPU (como
 .BR \-\-cpu ).
 .TP
+.B QT_QPA_PLATFORM
+En WSL (WSLg), si no está definida, se usa
+.B xcb
+(X11): con Wayland los desplegables de Qt no se cierran al elegir un valor.
+.TP
 .B XDG_CACHE_HOME
 Base de la caché (por defecto
 .IR ~/.cache ).
 .SH FICHEROS
+.TP
+.I ~/.config/Evoluciona/Evoluciona.ini
+Configuración guardada por la ventana (véase CONFIGURACIÓN).
 .TP
 .I ~/.cache/evoluciona/modelos/
 Modelos de segmentación, descargados la primera vez que se usan (el general ocupa unos 170 MB).

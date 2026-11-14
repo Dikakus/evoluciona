@@ -142,7 +142,11 @@ def analizar(
         except Exception as e:
             raise ValueError(f"No se puede leer la imagen {r}: {e}") from e
 
-    lienzo = tamanos[0]
+    # el encuadre lo fija la primera foto, pero con la resolución de la mayor: si la primera es pequeña,
+    # no limita la calidad de las demás
+    w0, h0 = tamanos[0]
+    k = max(1.0, max(min(w / w0, h / h0) for w, h in tamanos))  # cuánto mayor es la foto de más resolución
+    lienzo = (round(w0 * k), round(h0 * k))
     transformaciones: list[al.Similitud] = []
     segmentador: Segmentador | None = None
     ref: al.Referencia | None = None
@@ -184,7 +188,10 @@ def analizar(
 
         if figura is not None and (ref is None or opciones.referencia == "anterior"):
             m, v = al.a_lienzo(limpia, t, (w, h), lienzo)
-            ref = al.Referencia(figura.transformada(t), m, v)
+            colocada = figura.transformada(t)
+            # la altura que fija la escala de la serie: la de la primera figura entera (no cortada por el borde)
+            alto0 = ref.alto0 if ref is not None and ref.alto0 else (0.0 if colocada.cortada else colocada.alto)
+            ref = al.Referencia(colocada, m, v, alto0)
 
     if sin_figura:
         nombres = ", ".join(sin_figura[:5]) + ("…" if len(sin_figura) > 5 else "")
