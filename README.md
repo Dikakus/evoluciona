@@ -95,3 +95,7 @@ para que volver a abrir las mismas fotos sea inmediato.
 ```bash
 .venv/bin/python -m pytest
 ```
+
+## Licencia
+
+[MIT](LICENSE).
