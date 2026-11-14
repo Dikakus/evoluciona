@@ -1,6 +1,6 @@
 [project]
 name = "evoluciona"
-version = "0.5.0"
+version = "0.5.1"
 description = "Alinea las fotografías de un timelapse sobre la figura en primer plano, las compara y genera vídeo"
 readme = "README.md"
 requires-python = ">=3.10"

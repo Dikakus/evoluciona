@@ -64,6 +64,8 @@ se elige la más cercana a la fecha de captura del fichero. Con `--orden fecha` 
 - **Anterior / Siguiente** (o ← / →): cambia de par de fotografías.
 - **Contornos** (o `C`): dibuja el contorno de la silueta que se compara en cada foto del par, la
   izquierda en rojo y la derecha en verde; los botones de color junto a la casilla permiten cambiarlos.
+  Se funden con su foto al mover el deslizador: los dos plenos al 50 %, y con una sola foto a la vista,
+  solo su contorno, atenuado.
 - **Ir a la foto** (lista de la barra de herramientas o Ctrl+G): salta directamente a cualquier foto.
 - **Zoom**: rueda del ratón (sobre el punto señalado), `+` / `−`, `0` para ajustar a la ventana, doble clic
   para ampliar o volver a ajustar; la imagen ampliada se mueve arrastrando o con Mayús+flechas. Al ampliar,

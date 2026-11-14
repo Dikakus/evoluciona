@@ -29,6 +29,22 @@ from .video import CALIDADES, FORMATOS, AjustesVideo, exportar, ffmpeg_disponibl
 
 LADO_PREVIA = 1280  # lado mayor de los fotogramas de previsualización
 PASOS = 1000  # resolución del deslizador de transición
+CONTORNO_ATENUADO = 0.5  # opacidad del contorno de la foto que se ve sola (0 % o 100 % del deslizador)
+
+
+def opacidades_contornos(alfa: float) -> tuple[float, float]:
+    """Opacidad de los contornos de A y B según la mezcla (0 = solo A, 1 = solo B).
+
+    Ambos plenos al 50 %; en los extremos, el de la foto visible atenuado y el de la otra, oculto.
+    """
+    alfa = min(1.0, max(0.0, alfa))
+
+    def una(peso: float) -> float:  # peso de la foto en la mezcla (1 = se ve sola)
+        if peso >= 0.5:
+            return 1.0 - (1.0 - CONTORNO_ATENUADO) * (peso - 0.5) / 0.5
+        return peso / 0.5
+
+    return una(1.0 - alfa), una(alfa)
 MAX_ALTA = 4  # fotos a resolución completa que se guardan para ver con zoom
 
 AYUDA = """
@@ -86,7 +102,7 @@ class Visor(QWidget):
         self._arrastre: QPointF | None = None
         self.rotulo = ""  # texto sobreimpresionado (nombre del fichero en modo vídeo)
         # contornos de siluetas: (color, [puntos (x, y) normalizados 0-1 sobre la imagen])
-        self.contornos: list[tuple[QColor, list]] = []
+        self.contornos: list[tuple[QColor, list, float]] = []  # (color, polígonos, opacidad)
         self.mensaje = "Abre unas fotografías para empezar"
 
     def sizeHint(self) -> QSize:
@@ -285,7 +301,10 @@ class Visor(QWidget):
         p.setClipRect(zona)
         p.setRenderHint(QPainter.Antialiasing)
         p.setBrush(Qt.NoBrush)
-        for color, poligonos in self.contornos:
+        for color, poligonos, opacidad in self.contornos:
+            if opacidad <= 0.0 or not poligonos:
+                continue
+            p.setOpacity(opacidad)
             camino = QPainterPath()
             for puntos in poligonos:
                 xs = d.x() + puntos[:, 0] * d.width()
@@ -858,8 +877,9 @@ class Ventana(QMainWindow):
             self.visor.rotulo = ""  # en pares los nombres ya están junto al deslizador
             self.visor.contornos = []
             if self.chk_contornos.isChecked() and n >= 2:
-                self.visor.contornos = [(self.colores[0], self._contornos_de(i)),
-                                        (self.colores[1], self._contornos_de(i + 1))]
+                op_a, op_b = opacidades_contornos(alfa)  # se funden con su foto
+                self.visor.contornos = [(self.colores[0], self._contornos_de(i), op_a),
+                                        (self.colores[1], self._contornos_de(i + 1), op_b)]
         if self.modo_video:
             self.visor.contornos = []
         if self.selector.currentIndex() != actual:
