@@ -1,4 +1,4 @@
-.TH EVOLUCIONA 1 "2026-11-14" "evoluciona 0.4.0" "Órdenes de usuario"
+.TH EVOLUCIONA 1 "2026-11-14" "evoluciona 0.5.0" "Órdenes de usuario"
 .SH NOMBRE
 evoluciona \- alinea las fotografías de un timelapse sobre la figura en primer plano, las compara y genera vídeo
 .SH SINOPSIS
@@ -122,6 +122,15 @@ Transición gradual de la primera foto del par a la segunda.
 .B Superponer ambas al 50 %
 Muestra las dos fotos del par a la vez; el deslizador queda en el centro y desactivado.
 .TP
+.B Contornos
+Dibuja el contorno de la silueta detectada en cada foto del par (la que se usa para alinear): la
+izquierda en rojo y la derecha en verde por defecto; los botones de color junto a la casilla permiten
+cambiarlos y los nombres de las fotos se muestran en esos colores.
+Siguen al zoom.
+Necesitan las siluetas del análisis: con la alineación
+.B ninguno
+no las hay.
+.TP
 .B Ir a la foto
 Lista para saltar directamente a cualquier foto.
 .TP
@@ -137,6 +146,9 @@ Par anterior / siguiente; en modo vídeo, foto anterior / siguiente.
 .TP
 .B Ctrl+G
 Ir a una foto concreta.
+.TP
+.B C
+Mostrar u ocultar los contornos (modo de pares).
 .TP
 .B Espacio
 Reproducir / pausar (modo vídeo).
@@ -164,7 +176,7 @@ Resumen de atajos.
 .SH CONFIGURACIÓN
 La ventana guarda y recupera al abrirse la alineación (método, referencia, modelo y recorte), el ritmo
 del modo vídeo, las opciones con las que se generó el último vídeo (formato, resolución, fluidez y
-calidad), si se sobreimprime el nombre del fichero, la última carpeta abierta y el tamaño y posición de
+calidad), si se sobreimprime el nombre del fichero, los contornos y sus colores, la última carpeta abierta y el tamaño y posición de
 la ventana.
 Las opciones indicadas en la línea de órdenes prevalecen sobre lo guardado.
 Con

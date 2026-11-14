@@ -60,6 +60,8 @@ se elige la más cercana a la fecha de captura del fichero. Con `--orden fecha` 
 - **Deslizador**: transición gradual de la primera foto del par a la segunda.
 - **Superponer ambas al 50 %**: muestra las dos a la vez; el deslizador se coloca en el centro y queda desactivado.
 - **Anterior / Siguiente** (o ← / →): cambia de par de fotografías.
+- **Contornos** (o `C`): dibuja el contorno de la silueta que se compara en cada foto del par, la
+  izquierda en rojo y la derecha en verde; los botones de color junto a la casilla permiten cambiarlos.
 - **Ir a la foto** (lista de la barra de herramientas o Ctrl+G): salta directamente a cualquier foto.
 - **Zoom**: rueda del ratón (sobre el punto señalado), `+` / `−`, `0` para ajustar a la ventana, doble clic
   para ampliar o volver a ajustar; la imagen ampliada se mueve arrastrando o con Mayús+flechas. Al ampliar,
@@ -72,7 +74,7 @@ se elige la más cercana a la fecha de captura del fichero. Con `--orden fecha` 
 - **Alineación…**: método de alineado, foto de referencia, modelo de detección y recorte.
 
 La ventana recuerda entre sesiones la alineación, el ritmo del modo vídeo, las opciones del último vídeo
-generado, la última carpeta y el tamaño de la ventana (`~/.config/Evoluciona/Evoluciona.ini`); lo que se
+generado, los contornos y sus colores, la última carpeta y el tamaño de la ventana (`~/.config/Evoluciona/Evoluciona.ini`); lo que se
 indique en la línea de órdenes prevalece.
 
 ### Generar el vídeo sin ventana

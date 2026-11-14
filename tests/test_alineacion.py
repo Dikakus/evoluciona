@@ -77,3 +77,14 @@ def test_figura_cortada():
     assert not al._cortada(filas)  # entera
     assert al._cortada(np.r_[np.full(280, 40.0), np.zeros(40)])  # sale por arriba
     assert not al._cortada(np.r_[np.zeros(20), np.full(299, 40.0), [3.0]])  # solo un pie roza el borde
+
+
+def test_contornos_normalizados():
+    from evoluciona.proyecto import contornos
+    sil = np.zeros((200, 100), np.float32)
+    sil[50:150, 25:75] = 1.0  # rectángulo: x 0.25-0.75, y 0.25-0.75
+    sil[0:2, 0:2] = 1.0  # ruido diminuto: se descarta
+    c = contornos(sil)
+    assert len(c) == 1
+    assert abs(c[0][:, 0].min() - 0.25) < 0.01 and abs(c[0][:, 0].max() - 0.75) < 0.01
+    assert abs(c[0][:, 1].min() - 0.25) < 0.01 and abs(c[0][:, 1].max() - 0.75) < 0.01

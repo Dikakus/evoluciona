@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from PySide6.QtCore import QByteArray, QSettings
+from PySide6.QtGui import QColor
 
 from .alineacion import METODOS
 from .linea_tiempo import Ritmo
@@ -111,6 +112,11 @@ class Configuracion:
 
     def guardar(self, clave: str, valor) -> None:
         self.q.setValue(clave, valor)
+
+    def color(self, clave: str, defecto: str) -> QColor:
+        v = self.q.value(clave)
+        c = QColor(v) if isinstance(v, str) else QColor()
+        return c if c.isValid() else QColor(defecto)
 
     def texto(self, clave: str, defecto: str = "") -> str:
         v = self.q.value(clave)

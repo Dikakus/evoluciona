@@ -94,6 +94,48 @@ class Proyecto:
         ])
         return cv2.warpAffine(img, M, tam, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
+    def silueta(self, i: int, tam: tuple[int, int]) -> np.ndarray | None:
+        """Silueta de la figura de la foto ``i`` (float 0-1) colocada como en :meth:`fotograma`.
+
+        Usa la máscara guardada al analizar; ``None`` si no la hay (p. ej. alineación «ninguno»).
+        """
+        try:
+            fichero = _clave_mascara(self.rutas[i], self.opciones.modelo)
+            mascara = cv2.imread(str(fichero), cv2.IMREAD_GRAYSCALE) if fichero.exists() else None
+        except OSError:
+            return None
+        if mascara is None:
+            return None
+        w, h = self.tamanos[i]
+        figura, limpia = al.describir(mascara, w, h)
+        if figura is None:
+            return None
+        t = self.transformaciones[i]
+        cw, ch = self.tam_recorte
+        sx, sy = tam[0] / cw, tam[1] / ch
+        hm, wm = limpia.shape
+        a, b = sx * t.s * w / wm, sy * t.s * h / hm  # píxeles de salida por píxel de máscara
+        x0, y0 = self.recorte[0], self.recorte[1]
+        M = np.array([[a, 0.0, sx * (t.tx - x0) + 0.5 * a - 0.5],
+                      [0.0, b, sy * (t.ty - y0) + 0.5 * b - 0.5]])
+        sil = cv2.warpAffine(limpia, M, tam, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        # la máscara es de baja resolución: al ampliarla se ven sus píxeles; se suaviza en proporción
+        sigma = 0.5 * max(a, b)
+        return cv2.GaussianBlur(sil, (0, 0), sigma) if sigma >= 1.0 else sil
+
+
+def contornos(silueta: np.ndarray, area_min: float = 0.002) -> list[np.ndarray]:
+    """Contornos exteriores de una silueta (float 0-1), como puntos (x, y) normalizados a 0-1.
+
+    Se descartan los trozos menores que ``area_min`` de la imagen (ruido de la segmentación).
+    """
+    alto, ancho = silueta.shape[:2]
+    binaria = (silueta >= 0.5).astype(np.uint8)
+    hallados, _ = cv2.findContours(binaria, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    minimo = area_min * alto * ancho
+    return [(c.reshape(-1, 2).astype(np.float64) + 0.5) / (ancho, alto)
+            for c in hallados if len(c) >= 3 and cv2.contourArea(c) >= minimo]
+
 
 def _clave_mascara(ruta: Path, modelo: str) -> Path:
     st = ruta.stat()

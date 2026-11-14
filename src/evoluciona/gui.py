@@ -11,9 +11,11 @@ from pathlib import Path
 from PySide6.QtCore import (
     QElapsedTimer, QLibraryInfo, QObject, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, QTranslator, QUrl, Signal,
 )
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QAction, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
+)
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressDialog, QPushButton, QSlider,
     QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
@@ -22,7 +24,7 @@ from . import version_completa
 from .configuracion import Configuracion, combinar
 from .entrada import EXTENSIONES, ErrorEntrada, ordenar_por_nombre, recopilar
 from .linea_tiempo import Ritmo
-from .proyecto import CacheFotogramas, Cancelado, Opciones, Proyecto, analizar
+from .proyecto import CacheFotogramas, Cancelado, Opciones, Proyecto, analizar, contornos
 from .video import CALIDADES, FORMATOS, AjustesVideo, exportar, ffmpeg_disponible
 
 LADO_PREVIA = 1280  # lado mayor de los fotogramas de previsualización
@@ -45,6 +47,10 @@ AYUDA = """
 <tr><td><b>Doble clic</b></td><td>Ampliar en ese punto / volver a ajustar</td></tr>
 <tr><td><b>Arrastrar</b> (botón izquierdo)</td><td>Mover la imagen ampliada</td></tr>
 <tr><td><b>Mayús + flechas</b></td><td>Mover la imagen ampliada</td></tr>
+</table>
+<h3>Comparación</h3>
+<table cellspacing="4">
+<tr><td><b>C</b></td><td>Mostrar u ocultar el contorno de las siluetas que se comparan (colores en el panel)</td></tr>
 </table>
 <p>El zoom se conserva al cambiar de par o de foto. Al ampliar, las fotos se vuelven a generar
 a resolución completa en segundo plano.</p>
@@ -79,6 +85,8 @@ class Visor(QWidget):
         self._cx = self._cy = 0.5  # punto de la imagen (0-1) situado en el centro del visor
         self._arrastre: QPointF | None = None
         self.rotulo = ""  # texto sobreimpresionado (nombre del fichero en modo vídeo)
+        # contornos de siluetas: (color, [puntos (x, y) normalizados 0-1 sobre la imagen])
+        self.contornos: list[tuple[QColor, list]] = []
         self.mensaje = "Abre unas fotografías para empezar"
 
     def sizeHint(self) -> QSize:
@@ -93,6 +101,7 @@ class Visor(QWidget):
         self._escaladas.clear()
         self._generacion += 1  # invalida las escaladas de un proyecto anterior
         self.rotulo = ""
+        self.contornos = []
         self.ajustar()
         self.update()
 
@@ -265,8 +274,35 @@ class Visor(QWidget):
                 p.setOpacity(self._alfa)
                 dibujar(self._b[1])
         p.setOpacity(1.0)
+        if self.contornos:
+            self._dibujar_contornos(p, d, visible)
         if self.rotulo:
             self._dibujar_rotulo(p, visible)
+
+    def _dibujar_contornos(self, p: QPainter, d: QRectF, zona: QRectF) -> None:
+        """Contornos en coordenadas normalizadas: siguen al zoom y al desplazamiento."""
+        p.save()
+        p.setClipRect(zona)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(Qt.NoBrush)
+        for color, poligonos in self.contornos:
+            camino = QPainterPath()
+            for puntos in poligonos:
+                xs = d.x() + puntos[:, 0] * d.width()
+                ys = d.y() + puntos[:, 1] * d.height()
+                camino.moveTo(xs[0], ys[0])
+                for x, y in zip(xs[1:], ys[1:]):
+                    camino.lineTo(x, y)
+                camino.closeSubpath()
+            sombra = QPen(QColor(0, 0, 0, 110), 4.0)  # borde oscuro: se ve también sobre fondos claros
+            sombra.setCosmetic(True)
+            p.setPen(sombra)
+            p.drawPath(camino)
+            lapiz = QPen(color, 2.0)
+            lapiz.setCosmetic(True)
+            p.setPen(lapiz)
+            p.drawPath(camino)
+        p.restore()
 
     def _dibujar_rotulo(self, p: QPainter, zona: QRectF) -> None:
         fuente = p.font()
@@ -510,6 +546,7 @@ class Ventana(QMainWindow):
         self.proyecto: Proyecto | None = None
         self.cache: CacheFotogramas | None = None
         self._qimagenes: dict[int, QImage] = {}
+        self._contornos: dict[int, list] = {}
         self._par = 0
         self._t = 0.0  # posición en modo vídeo (s)
         self._hilo: QThread | None = None
@@ -623,6 +660,8 @@ class Ventana(QMainWindow):
         m.addActions([self.act_acercar, self.act_alejar, self.act_ajustar])
         m.addSeparator()
         m.addAction(self.act_rotulo)
+        self.act_contornos = nueva("Contornos de las siluetas (pares)", lambda: self.chk_contornos.toggle(), ("C",))
+        m.addAction(self.act_contornos)
         m = menus.addMenu("A&lineación")
         m.addAction(self.act_alineacion)
         m = menus.addMenu("Ay&uda")
@@ -668,6 +707,26 @@ class Ventana(QMainWindow):
         self.superponer.setToolTip("Muestra las dos fotos del par a la vez, con la mitad de opacidad cada una")
         self.superponer.toggled.connect(self._superponer_cambiado)
 
+        self.chk_contornos = QCheckBox("Contornos")
+        self.chk_contornos.setToolTip("Dibuja el contorno de la silueta detectada en cada foto del par (C)")
+        self.chk_contornos.setChecked(self.config.logico("vista/contornos", False))
+        self.chk_contornos.toggled.connect(self._contornos_cambiado)
+        self.colores = [self.config.color("vista/color_a", "#ff3030"), self.config.color("vista/color_b", "#30e030")]
+        self.btn_colores = []
+        for k, lado in enumerate(("izquierda (A)", "derecha (B)")):
+            boton = QToolButton()
+            boton.setToolTip(f"Color del contorno de la foto de la {lado}")
+            boton.clicked.connect(lambda _=False, k=k: self._elegir_color(k))
+            self.btn_colores.append(boton)
+        fila2 = QHBoxLayout()
+        fila2.addStretch(1)
+        fila2.addWidget(self.superponer)
+        fila2.addSpacing(24)
+        fila2.addWidget(self.chk_contornos)
+        for boton in self.btn_colores:
+            fila2.addWidget(boton)
+        fila2.addStretch(1)
+
         fila = QHBoxLayout()
         fila.addWidget(self.btn_anterior)
         fila.addWidget(self.nombre_a)
@@ -678,7 +737,8 @@ class Ventana(QMainWindow):
         capa = QVBoxLayout(panel)
         capa.setContentsMargins(0, 0, 0, 0)
         capa.addLayout(fila)
-        capa.addWidget(self.superponer, 0, Qt.AlignHCenter)
+        capa.addLayout(fila2)
+        self._pintar_colores()
         return panel
 
     def _crear_panel_video(self) -> QWidget:
@@ -743,6 +803,10 @@ class Ventana(QMainWindow):
         self.btn_anterior.setEnabled(pares and self._par > 0)
         self.btn_siguiente.setEnabled(pares and self._par < self.n - 2)
         self.superponer.setEnabled(pares)
+        self.chk_contornos.setEnabled(pares)
+        self.act_contornos.setEnabled(pares)
+        for boton in self.btn_colores:
+            boton.setEnabled(pares)
         self.deslizador.setEnabled(pares and not self.superponer.isChecked())
         self.spn_transicion.setEnabled(self.ritmo.fundido)
         for w in (self.btn_inicio, self.btn_reproducir, self.btn_final, self.linea):
@@ -792,6 +856,12 @@ class Ventana(QMainWindow):
                 self.nombre_b.setText(self.proyecto.rutas[i + 1].name)
             actual = i + 1 if alfa > 0.5 else i
             self.visor.rotulo = ""  # en pares los nombres ya están junto al deslizador
+            self.visor.contornos = []
+            if self.chk_contornos.isChecked() and n >= 2:
+                self.visor.contornos = [(self.colores[0], self._contornos_de(i)),
+                                        (self.colores[1], self._contornos_de(i + 1))]
+        if self.modo_video:
+            self.visor.contornos = []
         if self.selector.currentIndex() != actual:
             self.selector.setCurrentIndex(actual)
         try:
@@ -809,6 +879,43 @@ class Ventana(QMainWindow):
             self._espera_alta.start()
 
     # ---------------------------------------------------------------- pares
+
+    # ---------------------------------------------------------------- contornos
+
+    def _contornos_de(self, i: int) -> list:
+        """Contornos (normalizados) de la silueta de la foto ``i``, calculados una vez por proyecto."""
+        if i not in self._contornos:
+            sil = self.proyecto.silueta(i, self.cache.tam) if self.proyecto else None
+            self._contornos[i] = contornos(sil) if sil is not None else []
+        return self._contornos[i]
+
+    def _contornos_cambiado(self, activo: bool) -> None:
+        self.config.guardar("vista/contornos", activo)
+        self._pintar_colores()
+        self._refrescar()
+        if activo and self.proyecto and self.n >= 2 and not (self._contornos_de(self._par)
+                                                              or self._contornos_de(self._par + 1)):
+            self.statusBar().showMessage("No hay siluetas para estas fotos (¿alineación «Ninguno»?).", 6000)
+
+    def _elegir_color(self, k: int) -> None:
+        lado = "izquierda (A)" if k == 0 else "derecha (B)"
+        color = QColorDialog.getColor(self.colores[k], self, f"Color del contorno de la foto de la {lado}")
+        if color.isValid():
+            self.colores[k] = color
+            self.config.guardar("vista/color_a" if k == 0 else "vista/color_b", color.name())
+            self._pintar_colores()
+            self._refrescar()
+        self.activateWindow()
+
+    def _pintar_colores(self) -> None:
+        """Muestra el color en cada botón y, con los contornos activos, colorea el nombre de cada foto."""
+        for boton, color in zip(self.btn_colores, self.colores):
+            muestra = QPixmap(18, 18)
+            muestra.fill(color)
+            boton.setIcon(QIcon(muestra))
+        activo = self.chk_contornos.isChecked()
+        for etiqueta, color in zip((self.nombre_a, self.nombre_b), self.colores):
+            etiqueta.setStyleSheet(f"color: {color.name()}; font-weight: bold;" if activo else "")
 
     def _reiniciar_deslizador(self) -> None:
         """Al principio del par, o en el centro si está marcada la superposición al 50 %."""
@@ -1047,6 +1154,7 @@ class Ventana(QMainWindow):
         self.proyecto = proyecto
         self.cache = CacheFotogramas(proyecto, proyecto.tam_salida(lado_max=LADO_PREVIA))
         self._qimagenes.clear()
+        self._contornos = {}
         self._generacion += 1
         self._alta.clear()
         self._pedidas.clear()
