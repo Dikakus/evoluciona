@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import version_completa
 from .alineacion import METODOS
 from .entrada import ErrorEntrada, recopilar
 from .linea_tiempo import Ritmo
@@ -24,7 +24,11 @@ def _analizador() -> argparse.ArgumentParser:
     p.add_argument("--orden", choices=("nombre", "fecha", "dado"), default="nombre",
                    help="orden de las fotos: nombre (por defecto; sigue la secuencia numérica o de fechas del "
                         "nombre: foto-2 antes que foto-10), fecha (de captura) o dado (tal como se indican)")
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    p.add_argument("--cpu", action="store_true",
+                   help="no usar la GPU aunque esté disponible (equivale a EVOLUCIONA_DISPOSITIVO=cpu)")
+    p.add_argument("--diagnostico", action="store_true",
+                   help="muestra la versión y si la detección de la figura puede usar la GPU, y termina")
+    p.add_argument("--version", action="version", version=f"%(prog)s {version_completa()}")
 
     a = p.add_argument_group("alineación")
     a.add_argument("--metodo", choices=METODOS, default="contorno",
@@ -85,6 +89,21 @@ def main(argv: list[str] | None = None) -> int:
         p.error("los tiempos no pueden ser negativos")
     if args.alto is not None and args.alto < 16:
         p.error("--alto debe ser al menos 16")
+
+    from . import segmentacion
+
+    if args.cpu:
+        segmentacion.USAR_GPU = False
+    if args.diagnostico:
+        print(f"Evoluciona {version_completa()}")
+        print(f"Python {sys.version.split()[0]} · {sys.executable}")
+        try:
+            lineas = segmentacion.diagnostico()
+        except Exception as e:
+            print(f"Error en el diagnóstico: {e}", file=sys.stderr)
+            return 1
+        print("\n".join(lineas))
+        return 0
 
     from .proyecto import Opciones
 

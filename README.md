@@ -6,14 +6,37 @@ deslizador, reproducirlas como vídeo y exportar el resultado a MP4, WebM o GIF.
 
 ## Instalación
 
-Requiere Python ≥ 3.10 y `ffmpeg` (solo para generar vídeo).
+Requiere Linux x86_64 o aarch64 (también WSL), Python ≥ 3.10 y `ffmpeg` (solo para generar vídeo).
+
+### Como aplicación de escritorio
 
 ```bash
-uv venv && uv pip install -e ".[heic]"     # o: python3 -m venv .venv && .venv/bin/pip install -e ".[heic]"
+./instalar.sh -n                  # simula: muestra qué se instalaría y dónde, sin tocar nada
+./instalar.sh                     # instala en /usr/local (pide confirmación; usa sudo si hace falta)
+./instalar.sh usuario@equipo -p 22   # instala en otro equipo por SSH (p. ej. un Windows con WSL)
+./instalar.sh -u                  # desinstala
 ```
 
-El extra `heic` añade soporte para fotos HEIC/HEIF de móvil. La primera vez que se alinea se descarga
-el modelo de segmentación (U2-Net, ~170 MB) a `~/.cache/evoluciona/`.
+Instala el programa en un entorno de Python propio (`/usr/local/lib/evoluciona/`), la orden
+`/usr/local/bin/evoluciona`, el lanzador del menú de aplicaciones con su icono y la página de manual
+(`man evoluciona`). Instala lo que hay en el último commit de git (se niega si hay cambios sin commit) y
+compara versiones para no reinstalar ni volver atrás sin querer (`-f` lo fuerza). `./instalar.sh -h`
+explica todas las opciones (`-d` prefijo, `-m` carpeta de manuales, `-g` GPU...).
+
+**GPU**: si el equipo destino tiene una tarjeta NVIDIA con CUDA 12 (Linux x86_64 o WSL), se instala
+`onnxruntime-gpu` con sus librerías CUDA y cuDNN como paquetes de Python, sin tocar el sistema. Además, cada
+vez que se usa el programa se comprueba que la GPU funciona de verdad; si no, se usa la CPU y se avisa.
+`evoluciona --diagnostico` muestra qué se usará y `--cpu` desactiva la GPU.
+
+### Para desarrollo
+
+```bash
+uv venv && uv pip install -e ".[cpu,heic,dev]"    # o [gpu,heic,dev] con una NVIDIA (CUDA 12)
+```
+
+El extra `cpu` o `gpu` elige el motor de la segmentación (uno de los dos, no ambos) y `heic` añade soporte
+para fotos HEIC/HEIF de móvil. La primera vez que se alinea se descarga el modelo de segmentación
+(U2-Net, ~170 MB) a `~/.cache/evoluciona/`.
 
 ## Uso
 

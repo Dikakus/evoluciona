@@ -1,6 +1,6 @@
 [project]
 name = "evoluciona"
-version = "0.2.0"
+version = "0.3.0"
 description = "Alinea las fotografías de un timelapse sobre la figura en primer plano, las compara y genera vídeo"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -9,11 +9,13 @@ dependencies = [
     "scipy",
     "pillow",
     "opencv-python-headless",
-    "onnxruntime",
     "PySide6-Essentials",
 ]
 
 [project.optional-dependencies]
+# motor de la segmentación: uno de los dos (ambos instalan el módulo onnxruntime y no deben convivir)
+cpu = ["onnxruntime"]
+gpu = ["onnxruntime-gpu[cuda,cudnn]"]  # NVIDIA con CUDA 12 (Linux x86_64 / WSL)
 heic = ["pillow-heif"]
 dev = ["pytest"]
 

@@ -153,14 +153,19 @@ def analizar(
         if opciones.metodo == "ninguno":
             transformaciones.append(al.cubrir(w, h, lienzo))
             continue
-        informar(i, f"Analizando {r.name}")
+        informar(i, f"Analizando {r.name}" + (f" · {segmentador.dispositivo}" if segmentador else ""))
 
         fichero = _clave_mascara(r, opciones.modelo)
         mascara = cv2.imread(str(fichero), cv2.IMREAD_GRAYSCALE) if fichero.exists() else None
         if mascara is None:
             if segmentador is None:
                 segmentador = Segmentador(opciones.modelo, aviso=lambda t: informar(i, t))
+                if segmentador.aviso_gpu:
+                    avisos.append(segmentador.aviso_gpu)
+            antes = segmentador.aviso_gpu
             mascara = segmentador.mascara(imagen.cargar(r, escala_min=LADO_ANALISIS / max(w, h)))
+            if segmentador.aviso_gpu != antes:  # la GPU falló a mitad del análisis
+                avisos.append(segmentador.aviso_gpu)
             try:
                 fichero.parent.mkdir(parents=True, exist_ok=True)
                 cv2.imwrite(str(fichero), mascara)

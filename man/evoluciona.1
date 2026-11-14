@@ -1,0 +1,198 @@
+.TH EVOLUCIONA 1 "2026-11-14" "evoluciona 0.3.0" "Órdenes de usuario"
+.SH NOMBRE
+evoluciona \- alinea las fotografías de un timelapse sobre la figura en primer plano, las compara y genera vídeo
+.SH SINOPSIS
+.B evoluciona
+.RI [ opciones ]
+.RI [ FOTO ...]
+.br
+.B evoluciona
+.RI [ opciones ]
+.I FOTO ...
+.B \-\-exportar
+.I SALIDA
+.br
+.B evoluciona \-\-diagnostico
+.SH DESCRIPCIÓN
+.B evoluciona
+detecta en cada fotografía la figura destacada (una persona, una planta, un objeto...) con un modelo
+de segmentación (U2\-Net) y escala y desplaza cada foto, sin rotarla ni deformarla, para que la figura
+coincida con la de la foto de referencia.
+El resultado se recorta a la zona común a todas las fotos.
+.PP
+Sin
+.B \-\-exportar
+abre una ventana para comparar las fotos por pares, reproducir la secuencia («modo vídeo») y generar un vídeo.
+Con
+.B \-\-exportar
+genera el vídeo directamente, sin ventana.
+.PP
+Cada
+.I FOTO
+puede ser un fichero, un directorio (se toman sus imágenes, sin recursión) o un patrón
+(p. ej.\&
+.IR \(aqfotos/*.jpg\(aq ;
+admite
+.BR ** ).
+Formatos: JPEG, PNG, WebP, BMP, TIFF y, si está instalado pillow\-heif, HEIC/HEIF.
+.SH OPCIONES
+.TP
+.BR \-\-orden " {nombre,fecha,dado}"
+Orden de las fotos.
+.B nombre
+(por defecto) sigue la secuencia del nombre: numérica (nombre\-2 antes que nombre\-10) o de fechas, también
+compactas y sin ceros (nombre\-202612, nombre\-2026915, nombre\-20261011) o día\-mes\-año.
+Si una fecha compacta es ambigua se elige la más cercana a la fecha de captura del fichero.
+.B fecha
+usa la fecha de captura (EXIF) y
+.B dado
+respeta el orden en que se indican.
+.TP
+.B \-\-cpu
+No usa la GPU aunque esté disponible.
+.TP
+.B \-\-diagnostico
+Muestra la versión, el intérprete de Python y si la detección de la figura puede usar la GPU, y termina.
+.TP
+.B \-\-version
+Muestra la versión y el commit del que procede la copia instalada.
+.TP
+.BR \-h ", " \-\-help
+Muestra la ayuda de las opciones.
+.SS Alineación
+.TP
+.BR \-\-metodo " {contorno,altura,area,ninguno}"
+.B contorno
+(por defecto) maximiza el solape de las siluetas;
+.B altura
+iguala la altura de la figura;
+.B area
+iguala su superficie;
+.B ninguno
+no alinea.
+.TP
+.BR \-\-referencia " {anterior,primera}"
+Cada foto se alinea con la anterior (por defecto, para cambios graduales) o siempre con la primera.
+.TP
+.BR \-\-modelo " {general,persona,rapido}"
+Modelo de segmentación: cualquier figura (por defecto), específico para personas o rápido y menos preciso.
+.TP
+.B \-\-sin\-recorte
+No recorta a la zona común (se verán bordes negros).
+.SS Vídeo
+.TP
+.BI \-\-exportar " SALIDA"
+Genera el vídeo en
+.I SALIDA
+sin abrir la ventana.
+.TP
+.BR \-\-formato " {mp4,mp4\-h265,webm,gif}"
+Formato del vídeo; por defecto, según la extensión de
+.IR SALIDA .
+.TP
+.BR \-\-transicion " {fundido,corte}"
+Fundido entre fotos (por defecto) o cambio sin fundido.
+.TP
+.BI \-\-t\-transicion " S"
+Duración del fundido en segundos (1).
+.TP
+.BI \-\-t\-foto " S"
+Segundos que se muestra cada foto (1).
+.TP
+.BI \-\-fps " N"
+Fotogramas por segundo (30).
+.TP
+.BI \-\-alto " PX"
+Altura del vídeo en píxeles (por defecto, la original).
+.TP
+.BR \-\-calidad " {alta,media,baja}"
+Calidad de compresión (alta).
+.SH LA VENTANA
+.TP
+.B Deslizador
+Transición gradual de la primera foto del par a la segunda.
+.TP
+.B Superponer ambas al 50 %
+Muestra las dos fotos del par a la vez; el deslizador queda en el centro y desactivado.
+.TP
+.B Ir a la foto
+Lista para saltar directamente a cualquier foto.
+.TP
+.B Modo vídeo
+Reproduce la secuencia con el nombre del fichero sobreimpreso (se puede ocultar en el menú Ver).
+.TP
+.B Generar vídeo...
+Formato, resolución, fluidez, calidad, transición y tiempos.
+.SS Teclado y ratón
+.TP
+.BR "\(<- / \(->"
+Par anterior / siguiente; en modo vídeo, foto anterior / siguiente.
+.TP
+.B Ctrl+G
+Ir a una foto concreta.
+.TP
+.B Espacio
+Reproducir / pausar (modo vídeo).
+.TP
+.B Ctrl+O
+Abrir fotos.
+.TP
+.BR "+ / \-" " (o Ctrl++ / Ctrl+\-)"
+Acercar / alejar.
+.TP
+.BR 0 " (o Ctrl+0)"
+Ajustar a la ventana.
+.TP
+.B Rueda del ratón
+Acercar / alejar sobre el punto señalado.
+.TP
+.B Doble clic
+Ampliar en ese punto o volver a ajustar.
+.TP
+.BR "Arrastrar" " o " "Mayús+flechas"
+Mover la imagen ampliada.
+.TP
+.B F1
+Resumen de atajos.
+.SH GPU
+Si está instalado
+.B onnxruntime\-gpu
+(el instalador lo elige cuando detecta una tarjeta NVIDIA con CUDA 12), la detección de la figura usa la GPU.
+En cada ejecución se comprueba que CUDA funciona de verdad con una inferencia de prueba; si falla, al
+empezar o a mitad del análisis, se continúa con la CPU y se muestra un aviso con el motivo.
+El resto del proceso (alineado, composición y codificación del vídeo) usa la CPU.
+.SH ENTORNO
+.TP
+.B EVOLUCIONA_DISPOSITIVO
+Con el valor
+.B cpu
+no se usa la GPU (como
+.BR \-\-cpu ).
+.TP
+.B XDG_CACHE_HOME
+Base de la caché (por defecto
+.IR ~/.cache ).
+.SH FICHEROS
+.TP
+.I ~/.cache/evoluciona/modelos/
+Modelos de segmentación, descargados la primera vez que se usan (el general ocupa unos 170 MB).
+.TP
+.I ~/.cache/evoluciona/mascaras/
+Siluetas ya calculadas: volver a abrir las mismas fotos es inmediato.
+.SH ESTADO DE SALIDA
+0 si todo va bien; 1 si falla el análisis o la exportación; 2 si los argumentos no son válidos.
+.SH EJEMPLOS
+.TP
+.B evoluciona fotos/
+Abre la ventana con todas las fotos del directorio.
+.TP
+.B evoluciona \(aqfotos/2026\-*.jpg\(aq \-\-orden fecha
+Abre las fotos del patrón ordenadas por fecha de captura.
+.TP
+.B evoluciona fotos/ \-\-exportar evolucion.mp4 \-\-t\-foto 0.5 \-\-t\-transicion 0.8
+Genera un MP4 sin abrir la ventana.
+.TP
+.B evoluciona fotos/ \-\-exportar evolucion.gif \-\-alto 480 \-\-fps 15 \-\-transicion corte
+Genera un GIF pequeño, sin fundidos.
+.SH VÉASE TAMBIÉN
+.BR ffmpeg (1)

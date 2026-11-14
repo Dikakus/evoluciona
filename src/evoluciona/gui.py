@@ -10,14 +10,14 @@ from pathlib import Path
 from PySide6.QtCore import (
     QElapsedTimer, QLibraryInfo, QObject, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, QTranslator, QUrl, Signal,
 )
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressDialog, QPushButton, QSlider,
     QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
-from . import __version__
+from . import version_completa
 from .entrada import EXTENSIONES, ErrorEntrada, ordenar_por_nombre, recopilar
 from .linea_tiempo import Ritmo
 from .proyecto import CacheFotogramas, Cancelado, Opciones, Proyecto, analizar
@@ -1136,8 +1136,22 @@ class Ventana(QMainWindow):
 
     def _acerca_de(self) -> None:
         QMessageBox.about(self, "Acerca de Evoluciona",
-                          f"<b>Evoluciona {__version__}</b><p>Alinea las fotografías de un timelapse sobre la "
-                          "figura en primer plano, las compara por pares y genera vídeo.</p>")
+                          f"<b>Evoluciona {version_completa()}</b><p>Alinea las fotografías de un timelapse sobre "
+                          "la figura en primer plano, las compara por pares y genera vídeo.</p>"
+                          f"<p>Detección de la figura: {self._dispositivo()}</p>")
+
+    def _dispositivo(self) -> str:
+        from . import segmentacion
+
+        try:
+            ort = segmentacion._importar_ort()
+        except RuntimeError as e:
+            return str(e)
+        if not segmentacion.gpu_preferida():
+            return "CPU (forzada)"
+        if segmentacion.cuda_disponible(ort):
+            return "GPU (CUDA) si funciona; se comprueba al analizar (si falla, CPU con aviso)"
+        return "CPU"
 
     # ---------------------------------------------------------------- cierre
 
@@ -1156,6 +1170,8 @@ def ejecutar(rutas: list[Path], opciones: Opciones, ritmo: Ritmo, orden: str = "
     signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C en la terminal cierra la aplicación
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("Evoluciona")
+    app.setDesktopFileName("evoluciona")  # app_id de Wayland: enlaza la ventana con evoluciona.desktop
+    app.setWindowIcon(QIcon(str(Path(__file__).with_name("recursos") / "evoluciona.svg")))
     traductor = QTranslator(app)  # botones estándar de Qt (Aceptar, Cancelar, Sí, No…) en español
     if traductor.load("qtbase_es", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
         app.installTranslator(traductor)
