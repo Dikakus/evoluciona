@@ -20,7 +20,9 @@ Requiere Linux x86_64 o aarch64 (también WSL), Python ≥ 3.10 y `ffmpeg` (solo
 Instala el programa en un entorno de Python propio (`/usr/local/lib/evoluciona/`), la orden
 `/usr/local/bin/evoluciona`, el lanzador del menú de aplicaciones con su icono y la página de manual
 (`man evoluciona`). Instala lo que hay en el último commit de git (se niega si hay cambios sin commit) y
-compara versiones para no reinstalar ni volver atrás sin querer (`-f` lo fuerza). Si el equipo remoto es un Windows (su SSH abre `cmd.exe`), lo detecta
+compara versiones para no reinstalar ni volver atrás sin querer (`-f` lo fuerza). Los paquetes de Python
+descargados se guardan en `/usr/local/lib/evoluciona/.descargas/`: al instalar una versión nueva solo se
+descarga lo que haya cambiado (`-u` también la borra). Si el equipo remoto es un Windows (su SSH abre `cmd.exe`), lo detecta
 y se instala en su distribución WSL por defecto, sin cambiar nada en el Windows. `./instalar.sh -h`
 explica todas las opciones (`-d` prefijo, `-m` carpeta de manuales, `-g` GPU...).
 

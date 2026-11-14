@@ -6,6 +6,7 @@
 # Instala (con PREFIJO = /usr/local por defecto):
 #   PREFIJO/lib/evoluciona/<versión>/          entorno de Python con el programa y sus dependencias
 #   PREFIJO/lib/evoluciona/actual              enlace a la versión en uso (se cambia de forma atómica)
+#   PREFIJO/lib/evoluciona/.descargas/         caché de paquetes: las versiones siguientes no los descargan otra vez
 #   PREFIJO/bin/evoluciona                     lanzador
 #   PREFIJO/share/applications/evoluciona.desktop
 #   PREFIJO/share/icons/hicolor/*/apps/evoluciona.{svg,png}
@@ -20,7 +21,7 @@
 
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 NOMBRE="evoluciona"
 PROYECTO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ESTE=$(basename "${BASH_SOURCE[0]}")
@@ -209,6 +210,7 @@ consultar() {
             if [ -d "$v" ] && [ ! -L "$v" ] && [ "$(basename "$v")" != "$activa" ]; then echo "antigua=$v"; fi
         done
         echo "entorno_mb=$(du -sm "$L" 2>/dev/null | cut -f1)"
+        if [ -d "$L/.descargas" ]; then echo "descargas_mb=$(du -sm "$L/.descargas" 2>/dev/null | cut -f1)"; fi
     fi
     if [ -e "$P/bin/evoluciona" ] || [ -L "$P/bin/evoluciona" ]; then
         if grep -q 'Lanzador de Evoluciona' "$P/bin/evoluciona" 2>/dev/null; then echo "lanzador=propio"; else echo "lanzador=ajeno"; fi
@@ -273,23 +275,32 @@ instalar_programa() {  # P CARGA VERSION COMMIT MODO
     PY=$(command -v python3)
     UV=$(buscar_uv)
     nuevo="$L/$V-$COMMIT-$(date +%Y%m%d%H%M%S)"
-    como "$L" mkdir -p "$L"
+    # caché de descargas propia de la instalación (no la del usuario ni la de root): una versión nueva
+    # solo descarga los paquetes que hayan cambiado, y desinstalar la borra con todo lo demás
+    CACHE="$L/.descargas"
+    reutiliza=no  # se mira antes de crear el entorno (uv escribe en la caché al crearlo)
+    if [ -n "$(ls -A "$CACHE" 2>/dev/null)" ]; then reutiliza=si; fi
+    como "$L" mkdir -p "$L" "$CACHE"
 
     crear() {  # crear EXTRAS; pip y uv muestran su propio progreso (con tiempo restante por paquete)
         t=$(date +%s)
         echo "[1/3] Creando el entorno de Python en $nuevo…"
         if [ -n "$UV" ]; then
-            como "$L" env UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never "$UV" venv -q --python "$PY" "$nuevo" || return 1
+            como "$L" env UV_CACHE_DIR="$CACHE/uv" UV_PYTHON_DOWNLOADS=never "$UV" venv -q --python "$PY" "$nuevo" || return 1
         else
             como "$L" "$PY" -m venv "$nuevo" || return 1
         fi
         case $1 in gpu*) tam="unos 3 GB" ;; *) tam="unos 200 MB" ;; esac
-        echo "[2/3] Descargando e instalando las dependencias ($1; $tam; es lo que más tarda)…"
-        if [ -n "$UV" ]; then
-            como "$L" env UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never "$UV" pip install --python "$nuevo/bin/python" \
-                "evoluciona[$1] @ file://$RUEDA" || return 1
+        if [ "$reutiliza" = si ]; then
+            echo "[2/3] Instalando las dependencias ($1; se reutilizan las ya descargadas; solo se baja lo nuevo)…"
         else
-            como "$L" "$nuevo/bin/python" -m pip install --no-cache-dir --disable-pip-version-check \
+            echo "[2/3] Descargando e instalando las dependencias ($1; $tam; es lo que más tarda)…"
+        fi
+        if [ -n "$UV" ]; then
+            como "$L" env UV_CACHE_DIR="$CACHE/uv" UV_PYTHON_DOWNLOADS=never "$UV" pip install \
+                --python "$nuevo/bin/python" "evoluciona[$1] @ file://$RUEDA" || return 1
+        else
+            como "$L" "$nuevo/bin/python" -m pip install --cache-dir "$CACHE/pip" --disable-pip-version-check \
                 --progress-bar on "evoluciona[$1] @ file://$RUEDA" || return 1
         fi
         echo "      dependencias instaladas en $(transcurrido "$t")"
@@ -334,6 +345,9 @@ instalar_programa() {  # P CARGA VERSION COMMIT MODO
             como "$L" rm -rf "$v"
         fi
     done
+    if [ -n "$UV" ]; then  # quita de la caché lo que ya no usa ningún paquete
+        como "$L" env UV_CACHE_DIR="$CACHE/uv" "$UV" cache prune -q 2>/dev/null || true
+    fi
     instalar_fichero "$C/evoluciona" "$P/bin/evoluciona" 755
     echo "Programa instalado: $V ($COMMIT, $MODO) en $(transcurrido)"
 }
@@ -585,7 +599,7 @@ leer_consulta() {
         esac
     done < "$TMP/consulta"
     for k in prefijo manuales arq so wsl python python_version venv uv gpu cuda ffmpeg apt sudo sudo_sin_clave \
-             necesita_sudo distro usuario inst_programa entorno_mb lanzador inst_escritorio inst_manual en_path en_manpath en_xdg; do
+             necesita_sudo distro usuario inst_programa entorno_mb descargas_mb lanzador inst_escritorio inst_manual en_path en_manpath en_xdg; do
         D[$k]=${D[$k]:-}
     done
 }
@@ -650,7 +664,9 @@ if ((DESINSTALAR)); then
             msg "  $f"; hay=1
         fi
     done
-    if [[ -n ${D[entorno_mb]:-} ]]; then msg "  $P/lib/evoluciona/  (entorno de Python, ${D[entorno_mb]} MB)"; hay=1; fi
+    if [[ -n ${D[entorno_mb]:-} ]]; then
+        msg "  $P/lib/evoluciona/  (entorno de Python y caché de descargas, ${D[entorno_mb]} MB)"; hay=1
+    fi
     if ((!hay)); then msg "Evoluciona no está instalado en $DONDE con ese prefijo."; exit 0; fi
     msg "No se borran los modelos ni las siluetas de ~/.cache/evoluciona/ (de cada usuario)."
     if ((SIMULAR)); then msg $'\nSimulación: no se ha cambiado nada.'; exit 0; fi
@@ -765,7 +781,12 @@ lista() { local f; for f in "$@"; do if existe "$f"; then msg "  sustituye  $f";
 
 titulo "Cambios en $DONDE"
 if [[ ${ACCION[programa]} == instalar ]]; then
-    msg "  crea       $P/lib/evoluciona/$PVER-$COMMIT-<fecha>/  (entorno de Python, ~$([[ $MODO == gpu ]] && echo '3,5 GB' || echo '700 MB'); descarga ~$([[ $MODO == gpu ]] && echo '3 GB' || echo '200 MB'))"
+    if [[ -n ${D[descargas_mb]} ]]; then
+        descarga="reutiliza ${D[descargas_mb]} MB ya descargados; solo baja lo que haya cambiado"
+    else
+        descarga="descarga ~$([[ $MODO == gpu ]] && echo '3 GB' || echo '200 MB'), que se guarda para las próximas versiones"
+    fi
+    msg "  crea       $P/lib/evoluciona/$PVER-$COMMIT-<fecha>/  (entorno de Python, ~$([[ $MODO == gpu ]] && echo '3,5 GB' || echo '700 MB'); $descarga)"
     if [[ -n ${D[inst_programa]:-} ]]; then msg "  sustituye  $P/lib/evoluciona/actual  (enlace a la versión activa)"
     else msg "  crea       $P/lib/evoluciona/actual  (enlace a la versión activa)"; fi
     for v in "${ANTIGUAS[@]}"; do msg "  borra      $v"; done
