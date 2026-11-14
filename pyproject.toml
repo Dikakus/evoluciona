@@ -1,0 +1,31 @@
+[project]
+name = "evoluciona"
+version = "0.2.0"
+description = "Alinea las fotografías de un timelapse sobre la figura en primer plano, las compara y genera vídeo"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pillow",
+    "opencv-python-headless",
+    "onnxruntime",
+    "PySide6-Essentials",
+]
+
+[project.optional-dependencies]
+heic = ["pillow-heif"]
+dev = ["pytest"]
+
+[project.scripts]
+evoluciona = "evoluciona.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/evoluciona"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
