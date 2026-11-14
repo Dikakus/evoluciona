@@ -13,10 +13,14 @@
 #
 # Lo que se instala sale del último commit de git (no de la copia de trabajo), y la copia instalada
 # guarda ese commit: `evoluciona --version` lo muestra.
+#
+# El equipo remoto puede ser Linux o Windows con WSL: el SSH de Windows abre las sesiones en cmd.exe, así
+# que se detecta y todas las órdenes van por «wsl.exe -e». Los scripts nunca viajan por la línea de órdenes
+# (cmd.exe interpreta % ^ " & | < >): se copian con tar a una carpeta temporal y se ejecutan desde allí.
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 NOMBRE="evoluciona"
 PROYECTO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ESTE=$(basename "${BASH_SOURCE[0]}")
@@ -31,6 +35,8 @@ Uso: $ESTE [opciones] [[usuario@]equipo]
 
 Instala Evoluciona (programa, lanzador de escritorio, iconos y página de manual) en este equipo o,
 si se indica [usuario@]equipo, en otro por SSH (una sola conexión: la contraseña se pide una vez).
+El equipo remoto puede ser Linux o un Windows con WSL (se detecta solo y se instala en la
+distribución WSL por defecto, con su usuario por defecto).
 
 Opciones:
   -d, --destino PREFIJO   prefijo de instalación (por defecto /usr/local): bin, lib y share van debajo
@@ -102,10 +108,12 @@ done
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/evoluciona-instalar.XXXXXX")
 SSH_OPC=()
-RT=""  # carpeta temporal en el destino
+PREFIJO_REMOTO=()  # (wsl.exe -e) si el remoto es Windows con WSL
+WINDOWS=0
+RT=""  # carpeta temporal en el destino remoto
 limpiar() {
     if [[ -n $EQUIPO && -n $RT ]]; then
-        ssh "${SSH_OPC[@]}" "$EQUIPO" "rm -rf $(q "$RT")" 2>/dev/null || true
+        remoto rm -rf "$RT" </dev/null 2>/dev/null || true
     fi
     if [[ -n $EQUIPO && ${#SSH_OPC[@]} -gt 0 ]]; then
         ssh "${SSH_OPC[@]}" -O exit "$EQUIPO" 2>/dev/null || true
@@ -181,7 +189,7 @@ consultar() {
     if [ -z "$NVSMI" ] && [ -x /usr/lib/wsl/lib/nvidia-smi ]; then NVSMI=/usr/lib/wsl/lib/nvidia-smi; fi
     if [ -n "$NVSMI" ] && "$NVSMI" -L >/dev/null 2>&1 </dev/null; then
         echo "gpu=$("$NVSMI" --query-gpu=name --format=csv,noheader 2>/dev/null </dev/null | head -n 1)"
-        echo "cuda=$("$NVSMI" 2>/dev/null </dev/null | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -n 1)"
+        echo "cuda=$("$NVSMI" 2>/dev/null </dev/null | sed -n 's/.*CUDA[A-Z ]* Version: *\([0-9][0-9.]*\).*/\1/p' | head -n 1)"  # «CUDA Version» o «CUDA UMD Version»
     fi
     echo "ffmpeg=$(command -v ffmpeg 2>/dev/null || true)"
     echo "apt=$(command -v apt-get 2>/dev/null || true)"
@@ -189,6 +197,8 @@ consultar() {
     if sudo -n true 2>/dev/null; then echo "sudo_sin_clave=si"; else echo "sudo_sin_clave=no"; fi
     necesita=no
     for d in "$P/lib" "$P/bin" "$P/share" "$M"; do escribible "$d" || necesita=si; done
+    echo "distro=${WSL_DISTRO_NAME:-}"
+    echo "usuario=$(id -un)"
     echo "necesita_sudo=$necesita"
 
     L="$P/lib/evoluciona"
@@ -360,12 +370,17 @@ desinstalar() {  # P M QUITAR_LANZADOR_AJENO(si/no)
     actualizar_caches "$P"
 }
 
+instalar() {  # COMPONENTES(programa,escritorio,manual) P M CARGA VERSION COMMIT MODO: todo en una llamada
+    # (una sola sesión: si sudo pide contraseña, la pide una vez)
+    case ",$1," in *,programa,*) instalar_programa "$2" "$4" "$5" "$6" "$7" ;; esac
+    case ",$1," in *,escritorio,*) instalar_escritorio "$2" "$4" ;; esac
+    case ",$1," in *,manual,*) instalar_manual "$3" "$4" ;; esac
+}
+
 accion=$1; shift
 case $accion in
+    instalar) instalar "$@" ;;
     consultar) consultar "$@" ;;
-    programa) instalar_programa "$@" ;;
-    escritorio) instalar_escritorio "$@" ;;
-    manual) instalar_manual "$@" ;;
     desinstalar) desinstalar "$@" ;;
     diagnostico) "$1/bin/evoluciona" --diagnostico ;;
     *) echo "acción desconocida: $accion" >&2; exit 2 ;;
@@ -378,25 +393,51 @@ DESTINO
 conectar() {
     [[ -n $EQUIPO ]] || return 0
     command -v ssh >/dev/null || error "falta ssh"
-    SSH_OPC=(-o ControlMaster=auto -o "ControlPath=$TMP/ssh-%C" -o ControlPersist=120)
+    SSH_OPC=(-o ControlMaster=auto -o "ControlPath=$TMP/ssh-%C" -o ControlPersist=600)
     [[ -z $PUERTO ]] || SSH_OPC+=(-p "$PUERTO")
     msg "Conectando con $EQUIPO${PUERTO:+ (puerto $PUERTO)}…"
-    ssh "${SSH_OPC[@]}" -o ConnectTimeout=15 "$EQUIPO" true || error "no se puede conectar con $EQUIPO"
+    # conexión maestra sin ejecutar nada: aún no se sabe qué shell hay al otro lado
+    ssh "${SSH_OPC[@]}" -o ControlMaster=yes -o ConnectTimeout=15 -fN "$EQUIPO" \
+        || error "no se puede conectar por SSH con $EQUIPO${PUERTO:+ (puerto $PUERTO)}"
+    local sistema
+    sistema=$(timeout 30 ssh "${SSH_OPC[@]}" "$EQUIPO" uname -sm </dev/null 2>/dev/null | tr -d '\r' || true)
+    if [[ $sistema != Linux* ]]; then
+        msg "No responde un shell de Linux; probando Windows con WSL (si WSL estaba parado, tarda unos segundos)…"
+        sistema=$(timeout 120 ssh "${SSH_OPC[@]}" "$EQUIPO" wsl.exe -e uname -sm </dev/null 2>/dev/null | tr -d '\r' || true)
+        [[ $sistema == Linux* ]] || error "$EQUIPO no es Linux ni un Windows con WSL que responda por SSH.
+Prueba a mano: ssh${PUERTO:+ -p $PUERTO} $EQUIPO wsl.exe -e uname -a"
+        WINDOWS=1 PREFIJO_REMOTO=(wsl.exe -e)
+    fi
+    RT=$(remoto mktemp -d /tmp/evoluciona-instalar.XXXXXX </dev/null | tr -d '\r' || true)
+    if [[ $RT != /tmp/evoluciona-instalar.* ]]; then
+        RT=""; error "no se pudo crear la carpeta temporal en $EQUIPO"
+    fi
+    tar -C "$TMP" -cf - destino.sh | remoto tar -xf - -C "$RT" || error "no se pudo copiar el instalador a $EQUIPO"
 }
 
-destino() {  # destino ACCION ARGS...: ejecuta la parte del destino (el script va como argumento de sh -c)
-    local guion args="" a
-    guion=$(cat "$TMP/destino.sh")
-    if [[ -n $EQUIPO ]]; then
-        for a in "$@"; do args+=" $(q "$a")"; done
-        local t=()  # con terminal si sudo puede pedir la contraseña (las consultas, nunca: su salida se analiza)
-        if [[ $1 != consultar && $1 != diagnostico && ${D[necesita_sudo]:-} == si && ${D[sudo_sin_clave]:-} != si \
-              && -t 0 ]]; then
-            t=(-t)
-        fi
-        ssh "${SSH_OPC[@]}" "${t[@]}" "$EQUIPO" "sh -c $(q "$guion") evoluciona-destino$args"
+remoto() {  # remoto [-t] ORDEN ARGS...: ejecuta una orden (sin shell intermedio en Windows) en el remoto
+    local t=(-T) a orden=""
+    if [[ $1 == -t ]]; then shift; if [[ -t 0 && -t 1 ]]; then t=(-t); fi; fi
+    if ((WINDOWS)); then
+        # cmd.exe y wsl.exe reciben las palabras tal cual: nada que cmd.exe pueda interpretar
+        for a in "$@"; do
+            [[ -n $a && $a != *[[:space:]%\"^\&\|\<\>\'\!\(\)]* ]] \
+                || error "este valor no se puede enviar a Windows (espacios o caracteres especiales): «$a»"
+        done
+        ssh "${SSH_OPC[@]}" "${t[@]}" "$EQUIPO" "${PREFIJO_REMOTO[@]}" "$@"
     else
-        sh -c "$guion" evoluciona-destino "$@"
+        for a in "$@"; do orden+="$(q "$a") "; done
+        ssh "${SSH_OPC[@]}" "${t[@]}" "$EQUIPO" "$orden"
+    fi
+}
+
+destino() {  # destino ACCION ARGS...: ejecuta la parte del instalador que corre en el destino
+    if [[ -z $EQUIPO ]]; then
+        sh "$TMP/destino.sh" "$@"
+    elif [[ $1 != consultar && $1 != diagnostico && ${D[necesita_sudo]:-} == si && ${D[sudo_sin_clave]:-} != si ]]; then
+        remoto -t sh "$RT/destino.sh" "$@"  # con terminal: sudo pedirá la contraseña
+    else
+        remoto sh "$RT/destino.sh" "$@" </dev/null  # sin terminal: la salida se analiza
     fi
 }
 
@@ -405,14 +446,8 @@ consultar_destino() {
     leer_consulta
 }
 
-en_destino() {  # orden de shell en el destino
-    if [[ -n $EQUIPO ]]; then
-        local t=()
-        [[ -t 0 ]] && t=(-t)
-        ssh "${SSH_OPC[@]}" "${t[@]}" "$EQUIPO" "$1"
-    else
-        sh -c "$1"
-    fi
+en_destino() {  # en_destino ORDEN ARGS...: orden en el destino, con terminal (p. ej. sudo apt-get)
+    if [[ -n $EQUIPO ]]; then remoto -t "$@"; else "$@"; fi
 }
 
 # ------------------------------------------------------------------------------- comprobaciones locales
@@ -536,7 +571,7 @@ leer_consulta() {
         esac
     done < "$TMP/consulta"
     for k in prefijo manuales arq so wsl python python_version venv uv gpu cuda ffmpeg apt sudo sudo_sin_clave \
-             necesita_sudo inst_programa entorno_mb lanzador inst_escritorio inst_manual en_path en_manpath en_xdg; do
+             necesita_sudo distro usuario inst_programa entorno_mb lanzador inst_escritorio inst_manual en_path en_manpath en_xdg; do
         D[$k]=${D[$k]:-}
     done
 }
@@ -581,7 +616,11 @@ DONDE=${EQUIPO:-este equipo}
 P=${D[prefijo]} M=${D[manuales]}
 
 titulo "Destino: $DONDE"
-msg "Sistema: ${D[so]:-?} (${D[arq]})$([[ ${D[wsl]} == si ]] && echo ', WSL')"
+if ((WINDOWS)); then
+    msg "Sistema: Windows con WSL → distribución «${D[distro]:-?}» (${D[so]:-?}, ${D[arq]}), usuario ${D[usuario]}"
+else
+    msg "Sistema: ${D[so]:-?} (${D[arq]})$([[ ${D[wsl]} == si ]] && echo ', WSL'), usuario ${D[usuario]}"
+fi
 msg "Prefijo:   $P $( ((PREFIJO_ELEGIDO)) && echo '(elegido con -d)' || echo '(por defecto)')"
 msg "Manuales:  $M $( ((MANUALES_ELEGIDA)) && echo '(elegida con -m)' || echo '(por defecto: PREFIJO/share/man/man1)')"
 [[ ${D[necesita_sudo]} != si ]] || msg "Permisos:  se usará sudo (el destino no es escribible por el usuario)"
@@ -644,7 +683,7 @@ if ((${#FALTAN[@]} + ${#OPC[@]})); then
         if ((${#OPC[@]})) && confirmar "¿Instalar también las opcionales (${OPC[*]})?"; then paquetes+=("${OPC[@]}"); fi
         if ((${#paquetes[@]})); then
             if confirmar "¿Instalar en $DONDE con «sudo apt-get install ${paquetes[*]}»?"; then
-                en_destino "sudo apt-get install -y $(for x in "${paquetes[@]}"; do printf '%s ' "$(q "$x")"; done)" \
+                en_destino sudo apt-get install -y "${paquetes[@]}" \
                     || error "no se pudieron instalar las dependencias"
                 consultar_destino
                 FALTAN=()
@@ -731,14 +770,14 @@ confirmar $'\n'"¿Instalar en $DONDE?" || { msg "Cancelado."; exit "$E_CANCELADO
 
 # ------------------------------------------------------------------------------------- instalación
 if [[ -n $EQUIPO ]]; then
-    RT=$(ssh "${SSH_OPC[@]}" "$EQUIPO" 'mktemp -d "${TMPDIR:-/tmp}/evoluciona-instalar.XXXXXX"') || error "no se pudo crear la carpeta temporal remota"
-    tar -C "$TMP/carga" -cf - . | ssh "${SSH_OPC[@]}" "$EQUIPO" "tar -xf - -C $(q "$RT")" || error "no se pudo copiar el paquete"
+    tar -C "$TMP/carga" -cf - . | remoto tar -xf - -C "$RT" || error "no se pudo copiar el paquete a $EQUIPO"
+    CARGA="$RT"
 else
-    RT="$TMP/carga"
+    CARGA="$TMP/carga"
 fi
-[[ ${ACCION[programa]} != instalar ]] || destino programa "$P" "$RT" "$PVER" "$COMMIT" "$MODO" || error "falló la instalación del programa"
-[[ ${ACCION[escritorio]} != instalar ]] || destino escritorio "$P" "$RT" || error "falló la instalación del lanzador de escritorio"
-[[ ${ACCION[manual]} != instalar ]] || destino manual "$M" "$RT" || error "falló la instalación del manual"
+componentes=""
+for c in programa escritorio manual; do [[ ${ACCION[$c]} != instalar ]] || componentes+="${componentes:+,}$c"; done
+destino instalar "$componentes" "$P" "$M" "$CARGA" "$PVER" "$COMMIT" "$MODO" || error "la instalación no terminó bien"
 
 # ------------------------------------------------------------------------------------------ resumen
 consultar_destino

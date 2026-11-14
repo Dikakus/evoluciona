@@ -13,14 +13,15 @@ Requiere Linux x86_64 o aarch64 (también WSL), Python ≥ 3.10 y `ffmpeg` (solo
 ```bash
 ./instalar.sh -n                  # simula: muestra qué se instalaría y dónde, sin tocar nada
 ./instalar.sh                     # instala en /usr/local (pide confirmación; usa sudo si hace falta)
-./instalar.sh usuario@equipo -p 22   # instala en otro equipo por SSH (p. ej. un Windows con WSL)
+./instalar.sh usuario@equipo -p 22   # instala en otro equipo por SSH: Linux o Windows con WSL
 ./instalar.sh -u                  # desinstala
 ```
 
 Instala el programa en un entorno de Python propio (`/usr/local/lib/evoluciona/`), la orden
 `/usr/local/bin/evoluciona`, el lanzador del menú de aplicaciones con su icono y la página de manual
 (`man evoluciona`). Instala lo que hay en el último commit de git (se niega si hay cambios sin commit) y
-compara versiones para no reinstalar ni volver atrás sin querer (`-f` lo fuerza). `./instalar.sh -h`
+compara versiones para no reinstalar ni volver atrás sin querer (`-f` lo fuerza). Si el equipo remoto es un Windows (su SSH abre `cmd.exe`), lo detecta
+y se instala en su distribución WSL por defecto, sin cambiar nada en el Windows. `./instalar.sh -h`
 explica todas las opciones (`-d` prefijo, `-m` carpeta de manuales, `-g` GPU...).
 
 **GPU**: si el equipo destino tiene una tarjeta NVIDIA con CUDA 12 (Linux x86_64 o WSL), se instala
